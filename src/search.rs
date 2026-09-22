@@ -221,6 +221,13 @@ pub fn rebuild(store: &Store, project_id: i64) -> Result<usize> {
 pub fn query(store: &Store, project_id: i64, text: &str, limit: usize) -> Result<Vec<Hit>> {
     let q = text.split_whitespace().collect::<Vec<_>>().join(" ");
     anyhow::ensure!(!q.is_empty(), "查询词为空");
+    // Trigram needs ≥3 contiguous characters to form a single token, so a one-
+    // or two-character query would match nothing — an especially bad failure for
+    // CJK, where two characters is a complete business term (特价). Those short
+    // queries fall back to a substring scan over the same columns.
+    if q.chars().count() < 3 {
+        return like_query(store, project_id, &q, limit);
+    }
     let fts = to_fts_query(&q);
     let mut stmt = store
         .conn
@@ -241,6 +248,39 @@ pub fn query(store: &Store, project_id: i64, text: &str, limit: usize) -> Result
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
+/// Substring scan for queries too short for trigram (1–2 characters).
+///
+/// Runs only for short queries, where a full scan of the index is cheap relative
+/// to the value of actually finding the term. Matches the same two columns the
+/// FTS path indexes (`title`, `body`) so a short query and a long query see a
+/// consistent surface.
+fn like_query(store: &Store, project_id: i64, q: &str, limit: usize) -> Result<Vec<Hit>> {
+    let pattern = format!("%{}%", escape_like(q));
+    let mut stmt = store.conn.prepare(
+        "SELECT kind, subject_kind, subject_id, title, body, file_path
+         FROM search_fts
+         WHERE project_id = ?1 AND (title LIKE ?2 ESCAPE '\\' OR body LIKE ?2 ESCAPE '\\')
+         ORDER BY title LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(params![project_id, pattern, limit as i64], |r| {
+        Ok(Hit {
+            kind: r.get(0)?,
+            subject_kind: r.get(1)?,
+            subject_id: r.get(2)?,
+            title: r.get(3)?,
+            snippet: truncate_chars(&r.get::<_, String>(4)?, 160),
+            file: r.get(5)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
+/// Escape a literal for use inside a `LIKE` pattern, so `%`, `_` and `\` in the
+/// query match themselves rather than acting as wildcards.
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
 /// Wrap the query as an FTS5 phrase so none of its characters are parsed as
@@ -342,9 +382,30 @@ mod tests {
         let hits = query(&store, pid, "特价活动", 10).unwrap();
         assert!(hits.iter().any(|h| h.title.contains("TEJIA")));
         assert_eq!(hits[0].file.as_deref(), Some("a/CouponEnum.java"));
-        // A 2-char CJK query is below trigram's floor and returns nothing
-        // rather than false positives.
-        assert!(query(&store, pid, "特价", 10).unwrap().is_empty());
+        // A 2-char CJK query is below trigram's floor; it now falls back to a
+        // substring scan and still finds the term.
+        let hits = query(&store, pid, "特价", 10).unwrap();
+        assert!(hits.iter().any(|h| h.title.contains("TEJIA")));
+        // Single character works too.
+        assert!(query(&store, pid, "价", 10).unwrap().iter().any(|h| h.title.contains("TEJIA")));
+    }
+
+    #[test]
+    fn short_query_escapes_like_wildcards() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let pid = store.ensure_project("p", dir.path()).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO search_fts(title, body, kind, subject_kind, subject_id, project_id, file_path)
+                 VALUES ('x%y', '', 'symbol', 'class', 1, ?1, NULL)",
+                params![pid],
+            )
+            .unwrap();
+        // A literal `%` in the query must not be treated as a wildcard.
+        assert_eq!(query(&store, pid, "%", 10).unwrap()[0].title, "x%y");
+        assert!(query(&store, pid, "z", 10).unwrap().is_empty());
     }
 
     #[test]

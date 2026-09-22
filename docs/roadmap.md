@@ -53,13 +53,14 @@
 - JSP / JS 前端链路：不解析
 - 非 Java 项目：probe 架构支持扩展，但未实现其它语言
 - 配置中心持有的 MQ topic / 外部配置：无法从仓库反推，渲染时以 `${占位符}` 原样标注
-- `catlas query` 用 trigram 分词：**2 个及以下字符的检索（如单字「价」、两字「特价」）不会命中**，这是 trigram 的固有限制——需要 ≥3 字符（或 ≥3 字节的英文/标识符）。中文领域名、常量注释通常是 4 字以上，影响可控。
+- `catlas query` 用 trigram 分词：≥3 字符走 FTS，**1–2 字符（含中文两字词如「特价」）自动回退到 `title`/`body` 的 LIKE 子串扫描**（仅短查询触发，代价可控）。
 - `catlas sync` 只缓存 Java 解析（tree-sitter 是唯一重计算）；XML/properties/git 每次仍全量重扫——它们便宜，暂不值得缓存。git 历史信号每次仍重跑，是 sync 后剩余的主要耗时。
 
 ## 验证状态
 
 - 109 个单测全绿（含 fixtures：java/xml/properties/git/domain 划分/prompt 解析/query/sync）
 - `capability` 新增 4 个单测（响应容错 / 渲染分节 / 稀疏省略 / 弱输出标记），共 113 个
+- `catlas query` 短查询回退新增 1 个单测（LIKE 通配符转义），共 114 个
 - `yaoex-promotion` 全量构建实测：20 秒，模块12/文件1714/符号22394/调用边47807/表140/字段1434/入口506/领域43/链路455
 - `deepen --domain defective` 实测：产出领域解读 + 术语表，质量抽查通过（准确扒出「捡漏专区」别名、时间交叉互斥规则、`batchUpdateSortNum` 注释自曝无用等）
 - `deepen --capability` 实测：单入口能力叙述端到端跑通（demo 项目 `GET /coupon/list` 产出摘要/入参/执行过程/副作用/约束/易踩坑，二次运行按 digest 正确跳过）
@@ -67,6 +68,5 @@
 
 ## 待办（下次会话优先）
 
-1. `catlas query` 短查询（≤2 字符）优化：可选方案是查询前做 CJK 切词，或对短查询回退到 LIKE 扫描
-2. `catlas sync` 加速 git 历史信号（增量拉取新 commit、按 HEAD 缓存），目前每次 sync 仍全量重跑 `git log`
+1. `catlas sync` 加速 git 历史信号（增量拉取新 commit、按 HEAD 缓存），目前每次 sync 仍全量重跑 `git log`
 
