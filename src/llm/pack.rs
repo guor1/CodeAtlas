@@ -9,7 +9,7 @@
 use crate::store::Store;
 use crate::util::{estimate_tokens, has_cjk, truncate_chars};
 use anyhow::Result;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use std::fmt::Write as _;
 
 /// Per-section character allowances. Chinese comments cost roughly 2.5 bytes per
@@ -43,6 +43,147 @@ pub struct Pack {
     /// Digest of the evidence, so a note can be invalidated when it changes.
     pub source_digest: String,
     pub estimated_tokens: usize,
+}
+
+/// The evidence assembled for one entrypoint's capability narrative.
+pub struct CapabilityPack {
+    /// `"{kind}:{addr}"` — stable across rebuilds, unlike the entrypoint row id.
+    pub subject_key: String,
+    pub body: String,
+    pub source_digest: String,
+    pub estimated_tokens: usize,
+}
+
+/// Build the evidence pack for one entrypoint.
+///
+/// Unlike [`build`], this targets a single entrypoint and centres on what a
+/// *caller* needs: the signature, the call path, and the tables it ends up
+/// writing. The digest covers all of it, so an edited method or a new hop
+/// invalidates the note exactly like a domain dossier.
+pub fn build_capability(store: &Store, project_id: i64, entrypoint_id: i64) -> Result<CapabilityPack> {
+    let (kind, addr, name, doc, config_json, symbol_id): (
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+    ) = store.conn.query_row(
+        "SELECT kind, COALESCE(addr, ''), name, doc, config_json, symbol_id
+         FROM entrypoints WHERE project_id = ?1 AND id = ?2",
+        params![project_id, entrypoint_id],
+        |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        },
+    )?;
+
+    let subject_key = format!("{kind}:{addr}");
+    let mut s = String::new();
+    writeln!(s, "# 入口：{addr}")?;
+    writeln!(s, "类型：`{kind}`\n")?;
+    if let Some(d) = doc.as_deref().filter(|d| !d.trim().is_empty()) {
+        writeln!(s, "## 说明\n\n{d}\n")?;
+    }
+    if let Some(cfg) = config_json.as_deref() {
+        if !cfg.trim().is_empty() && cfg != "null" {
+            writeln!(s, "## 配置\n\n```json\n{cfg}\n```\n")?;
+        }
+    }
+    if let Some(sid) = symbol_id {
+        let (sig, sdoc): (Option<String>, Option<String>) = store
+            .conn
+            .query_row(
+                "SELECT signature, doc FROM symbols WHERE id = ?1",
+                params![sid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .unwrap_or((None, None));
+        writeln!(s, "## 方法签名\n\n`{}`", name)?;
+        if let Some(sig) = sig.as_deref().filter(|x| !x.trim().is_empty()) {
+            let _ = write!(s, "\n\n```java\n{sig}\n```");
+        }
+        if let Some(d) = sdoc.as_deref().filter(|d| !d.trim().is_empty()) {
+            let _ = writeln!(s, "\n\n{d}");
+        }
+        let _ = writeln!(s);
+    }
+    // Call paths and the tables they reach, the substance a caller cares about.
+    let mut seen_tables: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+    let mut trace_body = String::new();
+    let mut stmt = store.conn.prepare(
+        "SELECT path_json, tables_json FROM traces WHERE entrypoint_id = ?1 ORDER BY depth LIMIT 24",
+    )?;
+    for row in stmt.query_map(params![entrypoint_id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })? {
+        let (path_json, tables_json) = row?;
+        let Ok(path) = serde_json::from_str::<crate::structure::trace::TracePath>(&path_json)
+        else {
+            continue;
+        };
+        let ids: std::collections::BTreeMap<String, Vec<String>> =
+            serde_json::from_str(&tables_json).unwrap_or_default();
+        for id in ids.keys() {
+            if let Ok(i) = id.parse::<i64>() {
+                seen_tables.insert(i);
+            }
+        }
+        let _ = writeln!(trace_body, "- {}", path.labels.join(" → "));
+    }
+    if !trace_body.is_empty() {
+        let _ = writeln!(s, "\n## 调用链路\n\n{trace_body}");
+    }
+    if !seen_tables.is_empty() {
+        let mut tbody = String::new();
+        for tid in &seen_tables {
+            let name: String = store
+                .conn
+                .query_row("SELECT name FROM tables WHERE id = ?1", params![tid], |r| r.get(0))?;
+            let _ = writeln!(tbody, "\n### `{name}`");
+            let cols: Vec<(String, Option<String>, Option<String>, i64)> = store
+                .conn
+                .prepare(
+                    "SELECT name, java_type, doc, is_pk FROM columns
+                     WHERE table_id = ?1 ORDER BY is_pk DESC, name",
+                )?
+                .query_map(params![tid], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                })?
+                .collect::<rusqlite::Result<_>>()?;
+            if cols.is_empty() {
+                let _ = writeln!(tbody, "（字段未知）");
+                continue;
+            }
+            for (col, ty, doc, is_pk) in cols {
+                let pk = if is_pk == 1 { "（主键）" } else { "" };
+                match doc {
+                    Some(d) => {
+                        let _ = writeln!(tbody, "- `{col}`{pk} {} — {}", ty.as_deref().unwrap_or(""), one_line(&d));
+                    }
+                    None => {
+                        let _ = writeln!(tbody, "- `{col}`{pk} {}", ty.as_deref().unwrap_or(""));
+                    }
+                }
+            }
+        }
+        let _ = writeln!(s, "\n## 触达表\n{tbody}");
+    }
+
+    let body = s;
+    Ok(CapabilityPack {
+        subject_key,
+        source_digest: crate::util::sha256_hex(body.as_bytes()),
+        estimated_tokens: estimate_tokens(&body),
+        body,
+    })
 }
 
 pub fn build(store: &Store, project_id: i64, domain_id: i64) -> Result<Pack> {

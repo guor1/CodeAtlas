@@ -23,6 +23,10 @@ catlas render --claude-md
 catlas deepen --domain defective --dry-run   # 先看预估 token
 catlas deepen --domain defective             # 生成领域解读 + 术语表
 catlas render --claude-md                    # 把深挖结果写回 Markdown
+
+# 4.（可选）为单个入口生成能力叙述（调用者视角：入参/副作用/易踩坑）
+catlas deepen --capability --dry-run         # 先看预估 token
+catlas deepen --capability --kind dubbo      # 只做 Dubbo 接口；--kind http/job/mq 同
 ```
 
 其它命令：`catlas build`（全量重建）、`catlas sync`（增量，复用未变文件的解析缓存）、`catlas query "关键词" [--json]`（全文检索）、`catlas status`（各层统计）、`catlas domains [--json]`。

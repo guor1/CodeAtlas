@@ -180,6 +180,38 @@ fn entrypoints(store: &Store, project_id: i64) -> Result<String> {
             }
         }
         writeln!(s)?;
+        s.push_str(&capability_section(store, project_id, kind)?);
+    }
+    Ok(s)
+}
+
+/// Capability narratives for entrypoints of one kind, if any were generated.
+///
+/// The `subject_key` is `"{kind}:{addr}"`, so notes can be matched back to this
+/// kind without a row-id join (row ids are rebuilt on every `build`).
+fn capability_section(store: &Store, project_id: i64, kind: &str) -> Result<String> {
+    let prefix = format!("{kind}:");
+    let rows: Vec<(String, String)> = store
+        .conn
+        .prepare(
+            "SELECT subject_key, body_md FROM notes
+             WHERE project_id = ?1 AND kind = 'capability' AND subject_kind = 'entrypoint'
+               AND subject_key LIKE ?2
+             ORDER BY subject_key",
+        )?
+        .query_map(params![project_id, format!("{prefix}%")], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    if rows.is_empty() {
+        return Ok(String::new());
+    }
+    let mut s = String::new();
+    writeln!(s, "### 能力说明\n")?;
+    for (key, body) in rows {
+        let addr = key.strip_prefix(&prefix).unwrap_or(&key);
+        writeln!(s, "#### `{addr}`\n")?;
+        writeln!(s, "{body}")?;
     }
     Ok(s)
 }
@@ -217,6 +249,8 @@ fn jobs(store: &Store, project_id: i64) -> Result<String> {
             summarize(doc.as_deref(), 70),
         )?;
     }
+    writeln!(s)?;
+    s.push_str(&capability_section(store, project_id, "job")?);
     Ok(s)
 }
 
@@ -260,6 +294,8 @@ fn mq(store: &Store, project_id: i64) -> Result<String> {
             summarize(doc.as_deref(), 60),
         )?;
     }
+    writeln!(s)?;
+    s.push_str(&capability_section(store, project_id, "mq")?);
     Ok(s)
 }
 

@@ -182,6 +182,32 @@ pub struct Landmine {
     pub evidence: Option<String>,
 }
 
+/// Capability narrative for a single entrypoint, mirroring `capability_system`.
+#[derive(Debug, Deserialize)]
+pub struct CapabilityResponse {
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub inputs: Vec<CapabilityInput>,
+    #[serde(default)]
+    pub behavior: String,
+    #[serde(default)]
+    pub side_effects: Vec<String>,
+    #[serde(default)]
+    pub rules: Vec<String>,
+    #[serde(default)]
+    pub caveats: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CapabilityInput {
+    pub name: String,
+    #[serde(default)]
+    pub meaning: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
 /// Parse a model response into `T`, tolerating the wrappers models add.
 ///
 /// Even with an explicit instruction not to, responses sometimes arrive fenced
@@ -348,6 +374,20 @@ mod tests {
         assert_eq!(d.responsibility, "管优惠券");
         assert!(d.rules.is_empty());
         assert!(d.lifecycle.is_none());
+    }
+
+    #[test]
+    fn capability_tolerates_missing_optional_fields() {
+        let c: CapabilityResponse = parse_json(r#"{"summary":"查优惠券"}"#).unwrap();
+        assert_eq!(c.summary, "查优惠券");
+        assert!(c.inputs.is_empty());
+        assert!(c.side_effects.is_empty());
+        assert!(c.caveats.is_empty());
+        // Optional sub-fields default too.
+        let c: CapabilityResponse =
+            parse_json(r#"{"summary":"s","inputs":[{"name":"id"}]}"#).unwrap();
+        assert_eq!(c.inputs[0].meaning, "");
+        assert!(!c.inputs[0].required);
     }
 
     #[test]

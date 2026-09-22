@@ -26,7 +26,7 @@
 - [x] 证据 pack 预算裁剪
 - [x] 领域档案 + 术语表生成（含解析失败重试、截断检测）
 - [x] prompt→缓存（只缓存已解析成功的响应）
-- [ ] `capability`（单入口能力叙述）—— schema 就位，prompt 未接
+- [x] `capability`（单入口能力叙述）—— `deepen --capability [--kind …] [--domain …]`，渲染进 reference 入口页
 
 ## 阶段 D —— 增量与 agent 接入 ⚠️
 
@@ -59,13 +59,14 @@
 ## 验证状态
 
 - 109 个单测全绿（含 fixtures：java/xml/properties/git/domain 划分/prompt 解析/query/sync）
+- `capability` 新增 4 个单测（响应容错 / 渲染分节 / 稀疏省略 / 弱输出标记），共 113 个
 - `yaoex-promotion` 全量构建实测：20 秒，模块12/文件1714/符号22394/调用边47807/表140/字段1434/入口506/领域43/链路455
 - `deepen --domain defective` 实测：产出领域解读 + 术语表，质量抽查通过（准确扒出「捡漏专区」别名、时间交叉互斥规则、`batchUpdateSortNum` 注释自曝无用等）
+- `deepen --capability` 实测：单入口能力叙述端到端跑通（demo 项目 `GET /coupon/list` 产出摘要/入参/执行过程/副作用/约束/易踩坑，二次运行按 digest 正确跳过）
 
 ## 待办（下次会话优先）
 
 1. 端到端验证「L2 存活 rebuild」（阶段 D 最后一步，被打断未跑完）
-2. 决定 `capability` 是否接入（prompt 已就位，schema 未接）
-3. `catlas query` 短查询（≤2 字符）优化：可选方案是查询前做 CJK 切词，或对短查询回退到 LIKE 扫描
-4. `catlas sync` 加速 git 历史信号（增量拉取新 commit、按 HEAD 缓存），目前每次 sync 仍全量重跑 `git log`
+2. `catlas query` 短查询（≤2 字符）优化：可选方案是查询前做 CJK 切词，或对短查询回退到 LIKE 扫描
+3. `catlas sync` 加速 git 历史信号（增量拉取新 commit、按 HEAD 缓存），目前每次 sync 仍全量重跑 `git log`
 

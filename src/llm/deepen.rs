@@ -20,6 +20,10 @@ pub struct DeepenOptions {
     pub only_stale: bool,
     /// Minimum domain size worth spending tokens on.
     pub min_files: i64,
+    /// Generate capability narratives for entrypoints instead of domain dossiers.
+    pub capability: bool,
+    /// Restrict capability generation to these entrypoint kinds (dubbo/http/job/mq).
+    pub kinds: Vec<String>,
 }
 
 impl Default for DeepenOptions {
@@ -31,6 +35,8 @@ impl Default for DeepenOptions {
             only_stale: true,
             // A domain of one or two files is faster to read than to document.
             min_files: 3,
+            capability: false,
+            kinds: Vec::new(),
         }
     }
 }
@@ -130,6 +136,239 @@ pub fn run(
     // entries are findable without a rebuild.
     search::rebuild(store, project_id)?;
     Ok(stats)
+}
+
+/// An entrypoint worth writing a capability narrative for.
+struct EntryCandidate {
+    id: i64,
+    subject_key: String,
+}
+
+/// Candidate entrypoints for capability generation.
+///
+/// An entrypoint with neither a trace nor a doc gives the model nothing to
+/// ground a narrative on, so it is dropped rather than billed. The default
+/// selection is entrypoints that reach a table (the "what gets written" fact is
+/// the whole point); `--kind`/`--domain` narrow it further.
+fn capability_candidates(
+    store: &Store,
+    project_id: i64,
+    opts: &DeepenOptions,
+) -> Result<Vec<EntryCandidate>> {
+    let mut sql = String::from(
+        "SELECT e.id, e.kind, COALESCE(e.addr, ''), e.doc,
+                (SELECT COUNT(*) FROM traces t WHERE t.entrypoint_id = e.id)
+         FROM entrypoints e
+         WHERE e.project_id = ?1",
+    );
+    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(project_id)];
+    if !opts.kinds.is_empty() {
+        sql.push_str(" AND e.kind IN (");
+        for (i, k) in opts.kinds.iter().enumerate() {
+            if i > 0 {
+                sql.push(',');
+            }
+            sql.push('?');
+            args.push(Box::new(k.clone()));
+        }
+        sql.push(')');
+    }
+    if !opts.domains.is_empty() {
+        sql.push_str(
+            " AND EXISTS (SELECT 1 FROM domain_members m
+                          WHERE m.kind = 'entrypoint' AND m.ref_id = e.id
+                            AND m.domain_id IN
+                              (SELECT id FROM domains d
+                               WHERE d.project_id = e.project_id AND d.key IN (",
+        );
+        for (i, d) in opts.domains.iter().enumerate() {
+            if i > 0 {
+                sql.push(',');
+            }
+            sql.push('?');
+            args.push(Box::new(d.clone()));
+        }
+        sql.push_str(")))");
+    }
+
+    let mut stmt = store.conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(args.iter().map(|a| a.as_ref())), |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?,
+            r.get::<_, i64>(4)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, kind, addr, doc, traces) = row?;
+        let has_doc = doc.is_some_and(|d| !d.trim().is_empty());
+        let has_trace = traces > 0;
+        // With no explicit filters, keep only entrypoints that reach a table;
+        // a targeted run may still want the documented-but-traceless ones.
+        let targeted = !opts.kinds.is_empty() || !opts.domains.is_empty();
+        if has_trace || (targeted && has_doc) {
+            out.push(EntryCandidate { id, subject_key: format!("{kind}:{addr}") });
+        }
+    }
+    Ok(out)
+}
+
+/// True when this entrypoint already has a fresh capability note for the
+/// current evidence.
+fn is_capability_fresh(store: &Store, project_id: i64, subject_key: &str, digest: &str) -> Result<bool> {
+    let n: i64 = store.conn.query_row(
+        "SELECT COUNT(*) FROM notes
+         WHERE project_id = ?1 AND kind = 'capability' AND subject_key = ?2
+           AND status = 'fresh' AND source_digest = ?3",
+        params![project_id, subject_key, digest],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// Capability-generation pass: one narrative per selected entrypoint.
+pub fn run_capabilities(
+    store: &Store,
+    cfg: &client::Config,
+    opts: &DeepenOptions,
+) -> Result<DeepenStats> {
+    let project_id = store.project_id()?;
+    let mut stats = DeepenStats::default();
+
+    let mut todo = capability_candidates(store, project_id, opts)?;
+    if let Some(n) = opts.limit {
+        todo.truncate(n);
+    }
+
+    for c in todo {
+        let pack = pack::build_capability(store, project_id, c.id)
+            .with_context(|| format!("为入口 `{}` 组装证据失败", c.subject_key))?;
+
+        if opts.dry_run {
+            stats.planned.push((c.subject_key.clone(), pack.estimated_tokens));
+            continue;
+        }
+        if opts.only_stale && is_capability_fresh(store, project_id, &c.subject_key, &pack.source_digest)? {
+            stats.domains_skipped += 1;
+            continue;
+        }
+        match process_capability(store, cfg, project_id, &c, &pack, &mut stats) {
+            Ok(()) => stats.domains_processed += 1,
+            Err(e) => stats.failures.push((c.subject_key.clone(), format!("{e:#}"))),
+        }
+    }
+    search::rebuild(store, project_id)?;
+    Ok(stats)
+}
+
+fn process_capability(
+    store: &Store,
+    cfg: &client::Config,
+    project_id: i64,
+    c: &EntryCandidate,
+    pack: &pack::CapabilityPack,
+    stats: &mut DeepenStats,
+) -> Result<()> {
+    // Replace any prior narrative for this entrypoint; a stale one lingers
+    // otherwise, and `subject_key` is what makes it stable across rebuilds.
+    store.conn.execute(
+        "DELETE FROM notes WHERE project_id = ?1 AND kind = 'capability' AND subject_key = ?2",
+        params![project_id, c.subject_key],
+    )?;
+
+    let cap = complete_parsed::<prompt::CapabilityResponse>(
+        store,
+        cfg,
+        &prompt::capability_system(),
+        &pack.body,
+        stats,
+    )?;
+    let body = render_capability(&cap);
+    store.conn.execute(
+        "INSERT INTO notes(project_id, kind, subject_kind, subject_id, subject_key, title,
+                           body_md, status, model, prompt_hash, source_digest, generated_at)
+         VALUES (?1, 'capability', 'entrypoint', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            project_id,
+            c.id,
+            c.subject_key,
+            c.subject_key,
+            body,
+            capability_status(&cap),
+            cfg.model,
+            util::digest_parts([prompt::capability_system().as_str(), pack.body.as_str()]),
+            pack.source_digest,
+            util::now_iso(),
+        ],
+    )?;
+    stats.notes_written += 1;
+    Ok(())
+}
+
+/// Flag thin capability output for review, same spirit as [`note_status`].
+fn capability_status(c: &prompt::CapabilityResponse) -> &'static str {
+    if c.summary.trim().is_empty() || c.summary.contains("UNKNOWN") {
+        "needs_review"
+    } else {
+        "fresh"
+    }
+}
+
+/// Render a capability narrative as Markdown for the reference page.
+fn render_capability(c: &prompt::CapabilityResponse) -> String {
+    let mut s = String::new();
+    if !c.summary.trim().is_empty() {
+        let _ = writeln!(s, "{}\n", c.summary.trim());
+    }
+    if !c.inputs.is_empty() {
+        let _ = writeln!(s, "**入参**\n");
+        let _ = writeln!(s, "| 参数 | 含义 | 必填 |");
+        let _ = writeln!(s, "|---|---|---|");
+        for i in &c.inputs {
+            let _ = writeln!(
+                s,
+                "| `{}` | {} | {} |",
+                crate::render::cell(&i.name),
+                crate::render::cell(&i.meaning),
+                if i.required { "是" } else { "否" }
+            );
+        }
+        let _ = writeln!(s);
+    }
+    if !c.behavior.trim().is_empty() {
+        let _ = writeln!(s, "**执行过程**\n\n{}\n", c.behavior.trim());
+    }
+    if !c.side_effects.is_empty() {
+        let _ = writeln!(s, "**副作用**\n");
+        for e in &c.side_effects {
+            if !e.trim().is_empty() {
+                let _ = writeln!(s, "- {}", e.trim());
+            }
+        }
+        let _ = writeln!(s);
+    }
+    if !c.rules.is_empty() {
+        let _ = writeln!(s, "**前置条件 / 约束**\n");
+        for r in &c.rules {
+            if !r.trim().is_empty() {
+                let _ = writeln!(s, "- {}", r.trim());
+            }
+        }
+        let _ = writeln!(s);
+    }
+    if !c.caveats.is_empty() {
+        let _ = writeln!(s, "**易踩的坑**\n");
+        for w in &c.caveats {
+            if !w.trim().is_empty() {
+                let _ = writeln!(s, "- {}", w.trim());
+            }
+        }
+        let _ = writeln!(s);
+    }
+    s
 }
 
 /// True when this domain already has notes derived from the current evidence.
@@ -447,5 +686,45 @@ mod tests {
         assert_eq!(confidence_status(Some("low")), "needs_review");
         assert_eq!(confidence_status(Some("HIGH")), "fresh");
         assert_eq!(confidence_status(None), "fresh");
+    }
+
+    #[test]
+    fn capability_renders_sections() {
+        let c: prompt::CapabilityResponse = prompt::parse_json(
+            r#"{
+              "summary": "查询某活动下的缺陷商品清单。",
+              "inputs": [{"name":"promotionId","meaning":"活动ID","required":true}],
+              "behavior": "按活动 ID 查缺陷表后返回。",
+              "side_effects": ["读 t_promotion_defective"],
+              "rules": ["活动必须处于生效中"],
+              "caveats": ["同名概念在不同模块含义不同"]
+            }"#,
+        )
+        .unwrap();
+        let md = render_capability(&c);
+        assert!(md.contains("查询某活动下的缺陷商品清单"));
+        assert!(md.contains("| `promotionId` | 活动ID | 是 |"));
+        assert!(md.contains("**执行过程**"));
+        assert!(md.contains("读 t_promotion_defective"));
+        assert!(md.contains("**前置条件 / 约束**"));
+        assert!(md.contains("**易踩的坑**"));
+    }
+
+    #[test]
+    fn sparse_capability_renders_without_empty_headings() {
+        let c: prompt::CapabilityResponse = prompt::parse_json(r#"{"summary":"只有摘要。"}"#).unwrap();
+        let md = render_capability(&c);
+        assert!(md.contains("只有摘要"));
+        assert!(!md.contains("**入参**"));
+        assert!(!md.contains("**副作用**"));
+        assert!(!md.contains("**易踩的坑**"));
+    }
+
+    #[test]
+    fn thin_capability_is_flagged_for_review() {
+        let thin: prompt::CapabilityResponse = prompt::parse_json(r#"{"summary":"UNKNOWN"}"#).unwrap();
+        assert_eq!(capability_status(&thin), "needs_review");
+        let ok: prompt::CapabilityResponse = prompt::parse_json(r#"{"summary":"清楚的说明"}"#).unwrap();
+        assert_eq!(capability_status(&ok), "fresh");
     }
 }

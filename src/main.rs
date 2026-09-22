@@ -53,6 +53,12 @@ enum Command {
         /// 只处理指定领域，可重复；缺省为全部
         #[arg(long = "domain")]
         domains: Vec<String>,
+        /// 生成单入口能力叙述，而非领域解读
+        #[arg(long)]
+        capability: bool,
+        /// 能力叙述只处理指定入口类型，可重复（dubbo/http/job/mq）
+        #[arg(long)]
+        kind: Vec<String>,
         /// 只估算 token 消耗，不实际调用
         #[arg(long)]
         dry_run: bool,
@@ -98,14 +104,9 @@ fn main() -> Result<()> {
         Command::Render { path, out, claude_md } => {
             cmd_render(resolve(path)?, out.as_deref(), claude_md)
         }
-        Command::Deepen { path, domains, dry_run, limit, model, force } => cmd_deepen(
-            resolve(path)?,
-            domains,
-            dry_run,
-            limit,
-            model.as_deref(),
-            force,
-        ),
+        Command::Deepen { path, domains, capability, kind, dry_run, limit, model, force } => {
+            cmd_deepen(resolve(path)?, domains, capability, kind, dry_run, limit, model.as_deref(), force)
+        }
         Command::Domains { path, json } => cmd_domains(resolve(path)?, json),
         Command::Query { path, terms, limit, json } => cmd_query(resolve(path)?, terms, limit, json),
     }
@@ -214,6 +215,8 @@ fn cmd_render(root: PathBuf, out: Option<&Path>, claude_md: bool) -> Result<()> 
 fn cmd_deepen(
     root: PathBuf,
     domains: Vec<String>,
+    capability: bool,
+    kinds: Vec<String>,
     dry_run: bool,
     limit: Option<usize>,
     model: Option<&str>,
@@ -222,6 +225,8 @@ fn cmd_deepen(
     let store = Store::open_existing(&root)?;
     let opts = llm::deepen::DeepenOptions {
         domains,
+        capability,
+        kinds,
         dry_run,
         limit,
         only_stale: !force,
@@ -243,11 +248,16 @@ fn cmd_deepen(
         llm::client::Config::from_env(model)?
     };
 
-    let stats = llm::deepen::run(&store, &cfg, &opts)?;
+    let stats = if opts.capability {
+        llm::deepen::run_capabilities(&store, &cfg, &opts)?
+    } else {
+        llm::deepen::run(&store, &cfg, &opts)?
+    };
 
     if dry_run {
         let total: usize = stats.planned.iter().map(|(_, t)| *t).sum();
-        println!("将处理 {} 个领域，预估输入 token：", stats.planned.len());
+        let unit = if opts.capability { "个入口" } else { "个领域" };
+        println!("将处理 {} {}，预估输入 token：", stats.planned.len(), unit);
         for (key, tokens) in &stats.planned {
             println!("  {key:<24} ~{tokens}");
         }
@@ -256,9 +266,14 @@ fn cmd_deepen(
         return Ok(());
     }
 
-    println!("完成：{} 个领域已生成，{} 个跳过（结果仍新鲜）", stats.domains_processed, stats.domains_skipped);
-    println!("  领域解读  {}", stats.notes_written);
-    println!("  术语条目  {}", stats.glossary_written);
+    let unit = if opts.capability { "个入口" } else { "个领域" };
+    println!("完成：{} {}已生成，{} 个跳过（结果仍新鲜）", stats.domains_processed, unit, stats.domains_skipped);
+    if opts.capability {
+        println!("  能力叙述  {}", stats.notes_written);
+    } else {
+        println!("  领域解读  {}", stats.notes_written);
+        println!("  术语条目  {}", stats.glossary_written);
+    }
     println!("  实耗 token 输入 {} / 输出 {}", stats.input_tokens, stats.output_tokens);
     if stats.cache_hits > 0 {
         println!(
@@ -267,7 +282,7 @@ fn cmd_deepen(
         );
     }
     if !stats.failures.is_empty() {
-        println!("\n{} 个领域失败：", stats.failures.len());
+        println!("\n{} 个失败：", stats.failures.len());
         for (key, err) in &stats.failures {
             println!("  {key}: {err}");
         }
