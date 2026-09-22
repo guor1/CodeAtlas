@@ -30,7 +30,7 @@
 
 ## 阶段 D —— 增量与 agent 接入 ⚠️
 
-- [x] 深挖结果跨 rebuild 存活（`subject_key`/`domain_key` 稳定键 + relink）
+- [x] 深挖结果跨 rebuild 存活（`subject_key`/`domain_key` 稳定键 + relink）—— 端到端已验证：笔记存活、id 漂移后正确重链、领域消失变 stale 三条路径
 - [x] 领域档案/术语表按 digest 失效、`--only-stale` 跳过
 - [x] `catlas query`（FTS5 全文检索）—— trigram 分词、索引随 build/deepen 重建、`--json`
 - [x] `catlas sync`（增量）—— sha256 变更检测 + 解析缓存复用，见下方「sync 的变更检测为什么不看 git」
@@ -63,10 +63,10 @@
 - `yaoex-promotion` 全量构建实测：20 秒，模块12/文件1714/符号22394/调用边47807/表140/字段1434/入口506/领域43/链路455
 - `deepen --domain defective` 实测：产出领域解读 + 术语表，质量抽查通过（准确扒出「捡漏专区」别名、时间交叉互斥规则、`batchUpdateSortNum` 注释自曝无用等）
 - `deepen --capability` 实测：单入口能力叙述端到端跑通（demo 项目 `GET /coupon/list` 产出摘要/入参/执行过程/副作用/约束/易踩坑，二次运行按 digest 正确跳过）
+- `L2 存活 rebuild` 实测：三场景全过——(1) 全量 build 后笔记存活且 `subject_id` 正确重链；(2) 插入新领域使 coupon id 从 1→2，笔记跟着重链到 2；(3) `exclude` 掉 order 领域后其笔记变 `stale` 而非错误渲染
 
 ## 待办（下次会话优先）
 
-1. 端到端验证「L2 存活 rebuild」（阶段 D 最后一步，被打断未跑完）
-2. `catlas query` 短查询（≤2 字符）优化：可选方案是查询前做 CJK 切词，或对短查询回退到 LIKE 扫描
-3. `catlas sync` 加速 git 历史信号（增量拉取新 commit、按 HEAD 缓存），目前每次 sync 仍全量重跑 `git log`
+1. `catlas query` 短查询（≤2 字符）优化：可选方案是查询前做 CJK 切词，或对短查询回退到 LIKE 扫描
+2. `catlas sync` 加速 git 历史信号（增量拉取新 commit、按 HEAD 缓存），目前每次 sync 仍全量重跑 `git log`
 
