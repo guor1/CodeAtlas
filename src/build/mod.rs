@@ -36,6 +36,45 @@ pub struct BuildStats {
 /// costs minutes for no extra signal.
 const GIT_LOG_LIMIT: usize = 4000;
 
+/// The two git signals the pipeline needs, with a `HEAD`-keyed cache in front.
+///
+/// Git history is immutable once `HEAD` stops moving, so the expensive walks
+/// ([`git::log`], [`git::file_history`]) are replayed from `git_cache` when the
+/// head is unchanged and only re-run when a commit lands. `git_branches` is
+/// deliberately *not* cached — remote branch pointers move on `git fetch` without
+/// `HEAD` changing, and it is a single fast command anyway.
+fn git_signals(
+    store: &Store,
+    root: &Path,
+) -> (
+    BTreeMap<String, git::FileHistory>,
+    Vec<git::Commit>,
+) {
+    let empty = (BTreeMap::new(), Vec::new());
+    if !git::is_repo(root) {
+        return empty;
+    }
+    let Some(head) = git::head(root) else { return empty };
+    let limit = GIT_LOG_LIMIT as i64;
+    if let Ok(Some((hist_json, commits_json))) = store.cached_git(&head, limit) {
+        if let (Ok(hist), Ok(commits)) = (
+            serde_json::from_str::<BTreeMap<String, git::FileHistory>>(&hist_json),
+            serde_json::from_str::<Vec<git::Commit>>(&commits_json),
+        ) {
+            return (hist, commits);
+        }
+    }
+    let hist = git::file_history(root).unwrap_or_default();
+    let commits = git::log(root, GIT_LOG_LIMIT).unwrap_or_default();
+    // Best effort: a cache write that fails must not fail the build.
+    if let (Ok(hj), Ok(cj)) = (serde_json::to_string(&hist), serde_json::to_string(&commits)) {
+        if store.cache_git(&head, limit, &hj, &cj).is_ok() {
+            let _ = store.prune_git_cache(&head);
+        }
+    }
+    (hist, commits)
+}
+
 pub fn run(store: &Store, root: &Path) -> Result<BuildStats> {
     // A full build re-parses everything and its parse results are authoritative;
     // start the cache over so it cannot carry a parse from an older grammar.
@@ -56,11 +95,7 @@ pub fn pipeline(store: &Store, root: &Path) -> Result<BuildStats> {
     let modules = index_modules(store, project_id, root, &files)?;
     stats.modules = modules.len();
 
-    let histories = if git::is_repo(root) {
-        git::file_history(root).unwrap_or_default()
-    } else {
-        BTreeMap::new()
-    };
+    let (histories, commits) = git_signals(store, root);
 
     let file_ids = index_files(store, project_id, root, &files, &modules, &histories)?;
     stats.files = file_ids.len();
@@ -69,7 +104,7 @@ pub fn pipeline(store: &Store, root: &Path) -> Result<BuildStats> {
     xml_pass::run(store, project_id, root, &files, &file_ids, &java, &mut stats)?;
 
     if git::is_repo(root) {
-        index_git(store, project_id, root, &file_ids, &mut stats)?;
+        index_git(store, project_id, root, &file_ids, &commits, &mut stats)?;
     }
 
     // L1 runs in the same pass: it is pure computation over what L0 just wrote,
@@ -193,9 +228,9 @@ fn index_git(
     project_id: i64,
     root: &Path,
     file_ids: &BTreeMap<String, i64>,
+    commits: &[git::Commit],
     stats: &mut BuildStats,
 ) -> Result<()> {
-    let commits = git::log(root, GIT_LOG_LIMIT).unwrap_or_default();
     let branches = git::branches(root).unwrap_or_default();
 
     let tx = store.conn.unchecked_transaction()?;
@@ -207,7 +242,7 @@ fn index_git(
         let mut touch = tx.prepare(
             "INSERT OR IGNORE INTO git_touches(commit_id, file_id) VALUES (?1, ?2)",
         )?;
-        for c in &commits {
+        for c in commits {
             ins.execute(params![project_id, c.sha, c.authored_at, c.subject])?;
             let commit_id = tx.last_insert_rowid();
             for f in &c.files {

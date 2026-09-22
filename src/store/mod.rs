@@ -54,6 +54,7 @@ impl Store {
         self.conn.execute_batch("DROP TABLE IF EXISTS search_fts")?;
         self.conn.execute_batch(schema::FTS_DDL).context("creating search index")?;
         self.conn.execute_batch(schema::PARSE_CACHE_DDL).context("creating parse cache")?;
+        self.conn.execute_batch(schema::GIT_CACHE_DDL).context("creating git cache")?;
         let current: Option<String> = self
             .conn
             .query_row(
@@ -184,6 +185,19 @@ impl Store {
             .optional()?)
     }
 
+    /// The parse result for `sha`, if it was stored by a build of the current
+    /// tool version.
+    pub fn cached_parse(&self, project_id: i64, sha: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT result_json FROM parse_cache WHERE project_id = ?1 AND sha256 = ?2",
+                params![project_id, sha],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     /// Store a validated parse result so `sync` can reuse it next time the file
     /// is unchanged.
     pub fn cache_parse(&self, project_id: i64, sha: &str, lang: &str, json: &str) -> Result<()> {
@@ -192,6 +206,51 @@ impl Store {
              VALUES (?1, ?2, ?3, ?4)",
             params![project_id, sha, lang, json],
         )?;
+        Ok(())
+    }
+
+    /// The cached git signals for `head`, if a build at this `GIT_LOG_LIMIT`
+    /// stored them.
+    pub fn cached_git(&self, head: &str, commit_log_limit: i64) -> Result<Option<(String, String)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT file_history_json, commits_json FROM git_cache
+                 WHERE head = ?1 AND commit_log_limit = ?2",
+                params![head, commit_log_limit],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    /// Store the two expensive git walks so a later `sync` at the same `HEAD`
+    /// replays them instead of re-running them.
+    pub fn cache_git(
+        &self,
+        head: &str,
+        commit_log_limit: i64,
+        file_history_json: &str,
+        commits_json: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO git_cache(head, commit_log_limit, file_history_json, commits_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                head,
+                commit_log_limit,
+                file_history_json,
+                commits_json,
+                crate::util::now_iso()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Drop git-cache rows for every `HEAD` but the current one, keeping the
+    /// cache to a single row so a long-lived project database does not grow
+    /// one entry per commit forever.
+    pub fn prune_git_cache(&self, keep_head: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM git_cache WHERE head <> ?1", params![keep_head])?;
         Ok(())
     }
 

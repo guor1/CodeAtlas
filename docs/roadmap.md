@@ -28,7 +28,7 @@
 - [x] prompt→缓存（只缓存已解析成功的响应）
 - [x] `capability`（单入口能力叙述）—— `deepen --capability [--kind …] [--domain …]`，渲染进 reference 入口页
 
-## 阶段 D —— 增量与 agent 接入 ⚠️
+## 阶段 D —— 增量与 agent 接入 ✅
 
 - [x] 深挖结果跨 rebuild 存活（`subject_key`/`domain_key` 稳定键 + relink）—— 端到端已验证：笔记存活、id 漂移后正确重链、领域消失变 stale 三条路径
 - [x] 领域档案/术语表按 digest 失效、`--only-stale` 跳过
@@ -54,6 +54,7 @@
 - 非 Java 项目：probe 架构支持扩展，但未实现其它语言
 - 配置中心持有的 MQ topic / 外部配置：无法从仓库反推，渲染时以 `${占位符}` 原样标注
 - `catlas query` 用 trigram 分词：≥3 字符走 FTS，**1–2 字符（含中文两字词如「特价」）自动回退到 `title`/`body` 的 LIKE 子串扫描**（仅短查询触发，代价可控）。
+- `catlas sync` 的 git 历史信号按 `HEAD` 缓存：`HEAD` 未动时复用 `git_cache` 的两次 walk（`log`/`file_history`），**commit 后下一次 sync 仍 cache miss 全量重 walk**——`old..new` 增量摄取（第二层）尚未实现，这是 commit 频繁时 sync 剩余的主要耗时。
 - `catlas sync` 只缓存 Java 解析（tree-sitter 是唯一重计算）；XML/properties/git 每次仍全量重扫——它们便宜，暂不值得缓存。git 历史信号每次仍重跑，是 sync 后剩余的主要耗时。
 
 ## 验证状态
@@ -61,6 +62,7 @@
 - 109 个单测全绿（含 fixtures：java/xml/properties/git/domain 划分/prompt 解析/query/sync）
 - `capability` 新增 4 个单测（响应容错 / 渲染分节 / 稀疏省略 / 弱输出标记），共 113 个
 - `catlas query` 短查询回退新增 1 个单测（LIKE 通配符转义），共 114 个
+- `sync` git 缓存新增 2 个单测（`git::head` 正确/非 repo 为 None），共 116 个
 - `yaoex-promotion` 全量构建实测：20 秒，模块12/文件1714/符号22394/调用边47807/表140/字段1434/入口506/领域43/链路455
 - `deepen --domain defective` 实测：产出领域解读 + 术语表，质量抽查通过（准确扒出「捡漏专区」别名、时间交叉互斥规则、`batchUpdateSortNum` 注释自曝无用等）
 - `deepen --capability` 实测：单入口能力叙述端到端跑通（demo 项目 `GET /coupon/list` 产出摘要/入参/执行过程/副作用/约束/易踩坑，二次运行按 digest 正确跳过）
@@ -68,5 +70,6 @@
 
 ## 待办（下次会话优先）
 
-1. `catlas sync` 加速 git 历史信号（增量拉取新 commit、按 HEAD 缓存），目前每次 sync 仍全量重跑 `git log`
+1. `catlas sync` git 信号增量摄取（`old..new` walk，commit 后也免全量重跑）—— 第一层 HEAD 缓存已上线，这是第二层
+2. MCP server 暴露给 Claude Code —— 用 `catlas query --json` 先顶上，未做
 

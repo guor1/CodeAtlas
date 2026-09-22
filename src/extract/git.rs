@@ -6,11 +6,12 @@
 //! files actually matter today, independent of how large they are.
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Commit {
     pub sha: String,
     pub authored_at: String,
@@ -19,7 +20,7 @@ pub struct Commit {
     pub files: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FileHistory {
     pub commit_count: u32,
     pub first_commit_at: Option<String>,
@@ -28,6 +29,15 @@ pub struct FileHistory {
 
 pub fn is_repo(root: &Path) -> bool {
     root.join(".git").exists()
+}
+
+/// The current `HEAD` commit, the key the git cache hangs off.
+///
+/// Git history is a pure function of `HEAD` (ignoring remote branch pointers),
+/// so a `HEAD` that has not moved means the two expensive walks — [`log`] and
+/// [`file_history`] — can be replayed from cache instead of re-run.
+pub fn head(root: &Path) -> Option<String> {
+    git(root, &["rev-parse", "HEAD"]).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<String> {
@@ -210,5 +220,21 @@ mod tests {
     fn non_repo_is_detected() {
         let dir = tempfile::tempdir().unwrap();
         assert!(!is_repo(dir.path()));
+    }
+
+    #[test]
+    fn head_matches_the_latest_commit() {
+        let dir = fixture();
+        let h = head(dir.path()).unwrap();
+        assert_eq!(h.len(), 40);
+        // `head` is the newest commit, so its subject is the last message.
+        let commits = log(dir.path(), 50).unwrap();
+        assert_eq!(h, commits[0].sha);
+    }
+
+    #[test]
+    fn head_is_none_outside_a_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(head(dir.path()).is_none());
     }
 }

@@ -332,3 +332,19 @@ CREATE TABLE IF NOT EXISTS parse_cache (
   PRIMARY KEY(project_id, sha256)
 );
 "#;
+
+/// The git-signal cache, created outside `DDL` for the same reason as the two
+/// tables above (a derived, rebuildable artefact). One row per `HEAD`, so the
+/// two expensive history walks are replayed when `HEAD` is unchanged and only
+/// re-run when a commit lands. `commit_log_limit` is part of the key so a change
+/// to `GIT_LOG_LIMIT` invalidates stale subject lists rather than trusting them.
+pub const GIT_CACHE_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS git_cache (
+  head             TEXT NOT NULL,
+  commit_log_limit INTEGER NOT NULL,
+  file_history_json TEXT NOT NULL,
+  commits_json     TEXT NOT NULL,
+  created_at       TEXT NOT NULL,
+  PRIMARY KEY(head, commit_log_limit)
+);
+"#;
