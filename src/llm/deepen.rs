@@ -2,6 +2,7 @@
 //! entries, each carrying the digest of the evidence it was derived from.
 
 use super::{client, pack, prompt};
+use crate::search;
 use crate::store::Store;
 use crate::util;
 use anyhow::{Context, Result};
@@ -125,6 +126,9 @@ pub fn run(
             Err(e) => stats.failures.push((c.key.clone(), format!("{e:#}"))),
         }
     }
+    // The search index is a derived view; refresh it so new notes and glossary
+    // entries are findable without a rebuild.
+    search::rebuild(store, project_id)?;
     Ok(stats)
 }
 

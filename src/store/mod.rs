@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 
+use crate::extract::{git, walk};
+
 pub const CODEATLAS_DIR: &str = ".codeatlas";
 pub const DB_FILE: &str = "codeatlas.db";
 
@@ -45,6 +47,13 @@ impl Store {
 
     fn migrate(&self) -> Result<()> {
         self.conn.execute_batch(schema::DDL).context("applying schema")?;
+        // The FTS table is recreated every open: it is a derived index, and this
+        // is what lets an older database (whose table used a different tokenizer
+        // or column set) be upgraded in place rather than erroring on `CREATE …
+        // IF NOT EXISTS` against an incompatible existing table.
+        self.conn.execute_batch("DROP TABLE IF EXISTS search_fts")?;
+        self.conn.execute_batch(schema::FTS_DDL).context("creating search index")?;
+        self.conn.execute_batch(schema::PARSE_CACHE_DDL).context("creating parse cache")?;
         let current: Option<String> = self
             .conn
             .query_row(
@@ -106,6 +115,86 @@ impl Store {
         Ok(self.conn.query_row(&sql, [], |r| r.get(0))?)
     }
 
+    /// Register files, returning `rel path → file id`.
+    ///
+    /// Re-hashes every file on disk (the content identity that both `build` and
+    /// `sync` key their work on). `build` runs this on an empty table after
+    /// `reset_layers`; `sync` re-runs the full pipeline, so the same wipe applies.
+    pub fn index_files(
+        &self,
+        project_id: i64,
+        root: &Path,
+        files: &[walk::Found],
+        modules: &std::collections::BTreeMap<String, i64>,
+        histories: &std::collections::BTreeMap<String, git::FileHistory>,
+    ) -> Result<std::collections::BTreeMap<String, i64>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut ids = std::collections::BTreeMap::new();
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO files(project_id, path, lang, module_id, sha256, loc,
+                                   first_commit_at, last_commit_at, commit_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for f in files {
+                let bytes = std::fs::read(&f.path)
+                    .with_context(|| format!("reading {}", f.path.display()))?;
+                let sha = crate::util::sha256_hex(&bytes);
+                let loc = bytes.iter().filter(|b| **b == b'\n').count() as i64 + 1;
+                let module_id = owning_module(&f.rel, modules);
+                let h = histories.get(&f.rel);
+                stmt.execute(params![
+                    project_id,
+                    f.rel,
+                    f.lang.as_str(),
+                    module_id,
+                    sha,
+                    loc,
+                    h.and_then(|x| x.first_commit_at.clone()),
+                    h.and_then(|x| x.last_commit_at.clone()),
+                    h.map_or(0, |x| x.commit_count as i64),
+                ])?;
+                ids.insert(f.rel.clone(), tx.last_insert_rowid());
+            }
+        }
+        tx.commit()?;
+        let _ = root;
+        Ok(ids)
+    }
+
+    /// Record the tool minor version that last produced a successful build, so
+    /// `sync` can invalidate cached parses after a grammar change.
+    pub fn record_tool_version(&self, project_id: i64, version: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO tool_version(project_id, version) VALUES (?1, ?2)
+             ON CONFLICT(project_id) DO UPDATE SET version = excluded.version",
+            params![project_id, version],
+        )?;
+        Ok(())
+    }
+
+    pub fn tool_version(&self, project_id: i64) -> Result<Option<i64>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT version FROM tool_version WHERE project_id = ?1",
+                params![project_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Store a validated parse result so `sync` can reuse it next time the file
+    /// is unchanged.
+    pub fn cache_parse(&self, project_id: i64, sha: &str, lang: &str, json: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO parse_cache(project_id, sha256, lang, result_json)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![project_id, sha, lang, json],
+        )?;
+        Ok(())
+    }
+
     /// Wipe every derived layer for a project, keeping the project row and the
     /// LLM response cache (which is keyed by prompt hash and stays valid).
     pub fn reset_layers(&self, project_id: i64) -> Result<()> {
@@ -132,4 +221,30 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+
+    /// Recreate the parse cache from scratch (see `PARSE_CACHE_DDL`).
+    ///
+    /// Called by a `--full` build so the cache cannot carry a parse produced by
+    /// an older tree-sitter grammar into a newer build, and so it stays bounded
+    /// to the files actually present.
+    pub fn reset_parse_cache(&self) -> Result<()> {
+        self.conn.execute_batch("DROP TABLE IF EXISTS parse_cache")?;
+        self.conn.execute_batch(schema::PARSE_CACHE_DDL)?;
+        Ok(())
+    }
+}
+
+/// The most specific module whose directory contains this file.
+fn owning_module(rel: &str, modules: &std::collections::BTreeMap<String, i64>) -> Option<i64> {
+    let mut best: Option<(usize, i64)> = None;
+    for (dir, id) in modules {
+        let matches = dir == "." || rel.starts_with(&format!("{dir}/"));
+        if matches {
+            let depth = if dir == "." { 0 } else { dir.matches('/').count() + 1 };
+            if best.is_none_or(|(d, _)| depth > d) {
+                best = Some((depth, *id));
+            }
+        }
+    }
+    best.map(|(_, id)| id)
 }

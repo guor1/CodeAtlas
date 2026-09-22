@@ -4,10 +4,11 @@ mod java_pass;
 mod xml_pass;
 
 use crate::extract::{git, maven, walk};
+use crate::search;
 use crate::structure::{domain, trace};
 use crate::store::Store;
 use crate::util;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rusqlite::params;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -36,6 +37,15 @@ pub struct BuildStats {
 const GIT_LOG_LIMIT: usize = 4000;
 
 pub fn run(store: &Store, root: &Path) -> Result<BuildStats> {
+    // A full build re-parses everything and its parse results are authoritative;
+    // start the cache over so it cannot carry a parse from an older grammar.
+    store.reset_parse_cache()?;
+    pipeline(store, root)
+}
+
+/// The build pipeline, shared by `build` (cache reset first) and `sync` (cache
+/// retained, so unchanged files are never re-parsed).
+pub fn pipeline(store: &Store, root: &Path) -> Result<BuildStats> {
     let mut stats = BuildStats::default();
     let project_id = store.project_id()?;
 
@@ -67,8 +77,12 @@ pub fn run(store: &Store, root: &Path) -> Result<BuildStats> {
     let cfg = domain::DomainConfig::load(root)?;
     stats.domains = domain::assign(store, project_id, &cfg)?.len();
     stats.traces = trace::build(store, project_id)?;
+    // Search index is a derived view too; rebuild it here so `query` works
+    // immediately after every build without a separate step.
+    search::rebuild(store, project_id)?;
 
     finish_run(store, run_id, &stats)?;
+    store.record_tool_version(project_id, *crate::VERSION_MINOR)?;
     Ok(stats)
 }
 
@@ -171,52 +185,7 @@ fn index_files(
     modules: &BTreeMap<String, i64>,
     histories: &BTreeMap<String, git::FileHistory>,
 ) -> Result<BTreeMap<String, i64>> {
-    let tx = store.conn.unchecked_transaction()?;
-    let mut ids = BTreeMap::new();
-    {
-        let mut stmt = tx.prepare(
-            "INSERT INTO files(project_id, path, lang, module_id, sha256, loc,
-                               first_commit_at, last_commit_at, commit_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        )?;
-        for f in files {
-            let bytes = std::fs::read(&f.path)
-                .with_context(|| format!("reading {}", f.path.display()))?;
-            let loc = bytes.iter().filter(|b| **b == b'\n').count() as i64 + 1;
-            let module_id = owning_module(&f.rel, modules);
-            let h = histories.get(&f.rel);
-            stmt.execute(params![
-                project_id,
-                f.rel,
-                f.lang.as_str(),
-                module_id,
-                util::sha256_hex(&bytes),
-                loc,
-                h.and_then(|x| x.first_commit_at.clone()),
-                h.and_then(|x| x.last_commit_at.clone()),
-                h.map_or(0, |x| x.commit_count as i64),
-            ])?;
-            ids.insert(f.rel.clone(), tx.last_insert_rowid());
-        }
-    }
-    tx.commit()?;
-    let _ = root;
-    Ok(ids)
-}
-
-/// The most specific module whose directory contains this file.
-fn owning_module(rel: &str, modules: &BTreeMap<String, i64>) -> Option<i64> {
-    let mut best: Option<(usize, i64)> = None;
-    for (dir, id) in modules {
-        let matches = dir == "." || rel.starts_with(&format!("{dir}/"));
-        if matches {
-            let depth = if dir == "." { 0 } else { dir.matches('/').count() + 1 };
-            if best.is_none_or(|(d, _)| depth > d) {
-                best = Some((depth, *id));
-            }
-        }
-    }
-    best.map(|(_, id)| id)
+    store.index_files(project_id, root, files, modules, histories)
 }
 
 fn index_git(

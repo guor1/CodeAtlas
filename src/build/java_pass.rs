@@ -14,7 +14,6 @@ use rayon::prelude::*;
 use rusqlite::params;
 use std::collections::BTreeMap;
 use std::path::Path;
-
 /// What later passes need to know about the Java layer.
 pub struct JavaIndex {
     /// FQN → symbol id, for every type.
@@ -46,15 +45,47 @@ pub fn run(
 
     // Parse in parallel; one parser per rayon thread via thread-local reuse is
     // unnecessary because grammar loading is cheap relative to a 200-line file.
+    //
+    // A parse whose content hash is already in `parse_cache` is reused instead
+    // of re-parsed — this is the one step `sync` actually skips. `build` empties
+    // the cache first, so it always parses every file and repopulates it.
+    //
+    // The `Connection` is not `Sync`, so the closure may not touch the store:
+    // the cache is pre-loaded into a plain map for reads, and new parses are
+    // buffered in a `Mutex` and persisted single-threaded afterwards.
+    let cache: BTreeMap<String, String> = {
+        let mut stmt = store.conn.prepare("SELECT sha256, result_json FROM parse_cache WHERE project_id = ?1")?;
+        let mut out = BTreeMap::new();
+        for row in stmt.query_map(params![project_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+            let (sha, json) = row?;
+            out.insert(sha, json);
+        }
+        out
+    };
+    let new_parses = std::sync::Mutex::new(Vec::new());
     let parsed: Vec<(String, JavaFile)> = java_files
         .par_iter()
         .filter_map(|f| {
             let src = std::fs::read_to_string(&f.path).ok()?;
+            let sha = crate::util::sha256_hex(src.as_bytes());
+            if let Some(hit) = cache.get(&sha) {
+                return serde_json::from_str::<JavaFile>(hit).ok().map(|jf| (f.rel.clone(), jf));
+            }
             let mut p = java::parser().ok()?;
             let jf = java::extract(&src, &mut p).ok()?;
+            // Cache only a clean parse; a file with a syntax error is re-parsed
+            // next time rather than pinning a partial result.
+            if !jf.had_parse_error {
+                if let Ok(json) = serde_json::to_string(&jf) {
+                    new_parses.lock().unwrap().push((sha, json));
+                }
+            }
             Some((f.rel.clone(), jf))
         })
         .collect();
+    for (sha, json) in new_parses.into_inner().unwrap() {
+        store.cache_parse(project_id, &sha, "java", &json)?;
+    }
 
     stats.parse_errors += parsed.iter().filter(|(_, jf)| jf.had_parse_error).count();
 

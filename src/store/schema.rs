@@ -3,7 +3,7 @@
 //! Every table carries `project_id` so a future `catlas federate` can ATTACH
 //! several project databases into one hub without a schema change.
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub const DDL: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS build_runs (
   finished_at TEXT,
   tool_version TEXT NOT NULL,
   stats_json  TEXT
+);
+-- `version` holds the tool's minor version as of the last successful build
+-- (populated by `finish_run` from the lib crate's `VERSION_MINOR`). `sync` uses
+-- it to know which parses in `parse_cache` were produced by a compatible build.
+-- v2 databases from the schema_meta migration have no such row; the first build
+-- writes it, and until then `version` is NULL, which `sync` treats as "reparse".
+CREATE TABLE IF NOT EXISTS tool_version (
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  version    INTEGER
 );
 
 -- ---------------------------------------------------------------- L0
@@ -288,8 +297,38 @@ CREATE TABLE IF NOT EXISTS llm_cache (
 );
 
 -- ---------------------------------------------------------------- search
+-- The full-text index is a *derived* view (like the Markdown output), so it is
+-- safe to drop and rebuild at any time. It is created separately from the rest
+-- of the schema — see `FTS_DDL` below — because migrating a v1 database requires
+-- dropping the v1 table, and `IF NOT EXISTS` alone cannot change its tokenizer.
+"#;
+
+/// The FTS table, created outside `DDL` so the migrate path can drop a v1 table
+/// (whose `unicode61` tokenizer cannot be altered in place) before recreating it.
+///
+/// `trigram` matches substrings in both unsegmented Chinese and English
+/// identifiers, which a word-based tokenizer cannot do for CJK. Column order
+/// matches `INSERT INTO search_fts(...)` in `src/search.rs`.
+pub const FTS_DDL: &str = r#"
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
   title, body, kind UNINDEXED, subject_kind UNINDEXED,
-  subject_id UNINDEXED, project_id UNINDEXED, tokenize = 'unicode61'
+  subject_id UNINDEXED, project_id UNINDEXED, file_path UNINDEXED,
+  tokenize = 'trigram'
+);
+"#;
+
+/// The `parse_cache` table, created outside `DDL` (like `FTS_DDL`) so that
+/// `rebuild` — which recreates it from scratch — cannot race the idempotent
+/// `CREATE IF NOT EXISTS` that `migrate` runs against the same statement.
+///
+/// One row per parsed source file, keyed by content hash: `sync` stores a file's
+/// tree-sitter parse here and reuses it instead of re-parsing unchanged files.
+pub const PARSE_CACHE_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS parse_cache (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  sha256     TEXT NOT NULL,
+  lang       TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  PRIMARY KEY(project_id, sha256)
 );
 "#;

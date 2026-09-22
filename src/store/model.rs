@@ -93,7 +93,7 @@ impl EntrypointKind {
 }
 
 /// A parsed Java type reference, reduced to what resolution needs.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Annotation {
     pub name: String,
     /// Raw argument text keyed by parameter name; positional args use `"value"`.
@@ -112,7 +112,10 @@ impl Annotation {
 }
 
 /// One symbol as produced by a language probe, before it gets an id.
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` let a file's whole parse result round-trip through
+/// `parse_cache`, which is how `catlas sync` avoids re-parsing unchanged files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawSymbol {
     pub kind: SymbolKind,
     pub name: String,
@@ -136,7 +139,7 @@ pub struct RawSymbol {
 }
 
 /// Per-file extraction result from the Java probe.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JavaFile {
     pub package: Option<String>,
     pub imports: Vec<String>,

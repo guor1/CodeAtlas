@@ -67,6 +67,9 @@ v1 实现：maven / java(tree-sitter) / mybatis-xml / spring-xml / dubbo-xml / p
 | 两段式生成 | 先零成本全量骨架，再按需花 token 深挖 |
 | SQLite 真相 + Markdown 视图 | 兼顾程序查询与人类/agent 可读，融合可后加 |
 | 注释/枚举/commit 为一等证据 | 老项目这些比代码结构可靠（实测验证） |
+| 检索用 trigram 分词 | `unicode61` 词分词对无空格的中文失效；trigram 按子串匹配中英文。代价是 ≤2 字符查询不命中 |
+| sync 变更检测用内容 sha256，不看 git | git 看不见未提交改动、记录的是 commit 而非字节状态、且 `git log` 是最慢的部分；sha256 覆盖干净/脏树/非 git 项目所有状态 |
+| sync 复用整条 build 流水线、只跳过 tree-sitter | L1/L2 是全局聚合无法按文件增量；跳过唯一真正昂贵的单文件步骤即可，产出与全量 build 逐字节一致，靠 `tool_version` 保证语法升级后缓存失效 |
 
 ## 为什么这样设计对老项目有效
 

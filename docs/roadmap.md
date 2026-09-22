@@ -32,26 +32,40 @@
 
 - [x] 深挖结果跨 rebuild 存活（`subject_key`/`domain_key` 稳定键 + relink）
 - [x] 领域档案/术语表按 digest 失效、`--only-stale` 跳过
-- [ ] `catlas sync`（只重解析变更文件）—— **未实现**，当前 `build` 全量重建
-- [ ] `catlas query`（FTS5 全文检索）—— **未实现**，schema 有 `search_fts` 表，命令和索引填充没接
+- [x] `catlas query`（FTS5 全文检索）—— trigram 分词、索引随 build/deepen 重建、`--json`
+- [x] `catlas sync`（增量）—— sha256 变更检测 + 解析缓存复用，见下方「sync 的变更检测为什么不看 git」
 - [ ] MCP server 暴露给 Claude Code —— 用 `catlas query --json` 先顶上，未做
+
+## sync 的变更检测为什么不看 git
+
+`sync` 判断「哪些文件变了」用的是每文件内容的 SHA-256，而不是 git 提交记录。原因：
+
+1. **看不见未提交的改动。** 开发最频繁的循环是「改一行 → 跑 sync 看效果」，`git log` 只反映已提交状态，恰恰漏掉这个循环。要补得用 `git status --porcelain` 探测脏工作区，而一旦探测到脏文件，还是得回头去哈希那些文件。
+2. **git 记录的是「哪个 commit 碰了哪些文件」，不是「磁盘字节与我上次索引时是否不同」。** 文件被 revert 回原样、rebase 重写对象哈希、换机器新 clone 后构建——git 的 commit sha 都指不到「我上次解析的那个字节状态」。
+3. **代价不对称。** 现在的 build 里 `git log` 历史信号（churn 全量走一遍、subject 限 4000 条）是**最慢**的部分（十年老库要走几分钟）。用 git 驱动 sync 既保留这个成本又添脆弱性；sha256 遍历哈希几千个文件单线程都不到一秒。
+4. **sha256 唯一能覆盖所有状态**：干净树、脏树、rebase 后、非 git 项目、别人机器建的库——全统一。
+
+而 sync 真正的难点不在「找变更文件」，在于 **L1/L2 是全局聚合**：`refs` 解析（`unique_method` 需要全项目符号表）、领域投票、trace BFS、FTS 索引都无法按文件增量。所以 sync 的实现是「**复用 build 的整条流水线，只跳过 tree-sitter 解析这一步**」——未变更文件的解析结果按内容哈希缓存在 `parse_cache`，命中即复用；产出与全量 `build` 逐字节一致。只有工具版本升级（改了语法树或 schema）时才丢弃缓存全量重算，靠 `tool_version` 表判定。
 
 ## 已知未做 / 限制
 
 - 跨项目知识融合：仅 schema 预埋 `project_id`，无实现
-- `catlas query` / `catlas sync`：CLI 未实现，但 README/生成文档里已提前占位（**注意：现阶段会报「找不到子命令」**）
 - JSP / JS 前端链路：不解析
 - 非 Java 项目：probe 架构支持扩展，但未实现其它语言
 - 配置中心持有的 MQ topic / 外部配置：无法从仓库反推，渲染时以 `${占位符}` 原样标注
+- `catlas query` 用 trigram 分词：**2 个及以下字符的检索（如单字「价」、两字「特价」）不会命中**，这是 trigram 的固有限制——需要 ≥3 字符（或 ≥3 字节的英文/标识符）。中文领域名、常量注释通常是 4 字以上，影响可控。
+- `catlas sync` 只缓存 Java 解析（tree-sitter 是唯一重计算）；XML/properties/git 每次仍全量重扫——它们便宜，暂不值得缓存。git 历史信号每次仍重跑，是 sync 后剩余的主要耗时。
 
 ## 验证状态
 
-- 101 个单测全绿（含 fixtures：java/xml/properties/git/domain 划分/prompt 解析）
+- 109 个单测全绿（含 fixtures：java/xml/properties/git/domain 划分/prompt 解析/query/sync）
 - `yaoex-promotion` 全量构建实测：20 秒，模块12/文件1714/符号22394/调用边47807/表140/字段1434/入口506/领域43/链路455
 - `deepen --domain defective` 实测：产出领域解读 + 术语表，质量抽查通过（准确扒出「捡漏专区」别名、时间交叉互斥规则、`batchUpdateSortNum` 注释自曝无用等）
 
 ## 待办（下次会话优先）
 
 1. 端到端验证「L2 存活 rebuild」（阶段 D 最后一步，被打断未跑完）
-2. 实现 `catlas query`（FTS5）与 `catlas sync`（增量）
-3. 决定 `capability` 是否接入
+2. 决定 `capability` 是否接入（prompt 已就位，schema 未接）
+3. `catlas query` 短查询（≤2 字符）优化：可选方案是查询前做 CJK 切词，或对短查询回退到 LIKE 扫描
+4. `catlas sync` 加速 git 历史信号（增量拉取新 commit、按 HEAD 缓存），目前每次 sync 仍全量重跑 `git log`
+

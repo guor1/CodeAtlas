@@ -25,7 +25,7 @@ catlas deepen --domain defective             # 生成领域解读 + 术语表
 catlas render --claude-md                    # 把深挖结果写回 Markdown
 ```
 
-其它命令：`catlas build`（全量重建）、`catlas status`（各层统计）、`catlas domains [--json]`。
+其它命令：`catlas build`（全量重建）、`catlas sync`（增量，复用未变文件的解析缓存）、`catlas query "关键词" [--json]`（全文检索）、`catlas status`（各层统计）、`catlas domains [--json]`。
 
 ## 产物结构
 

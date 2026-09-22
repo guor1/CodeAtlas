@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use codeatlas::{build, llm, render, store::Store};
+use codeatlas::{build, llm, render, search, store::Store, sync};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -27,6 +27,10 @@ enum Command {
     },
     /// 全量重建 L0 事实层与 L1 结构层
     Build {
+        path: Option<PathBuf>,
+    },
+    /// 增量同步：只重解析内容有变化的文件，其余复用缓存
+    Sync {
         path: Option<PathBuf>,
     },
     /// 显示知识库各层统计与新鲜度
@@ -68,6 +72,20 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// 全文检索知识库（符号、表、入口、领域、术语、提交信息）
+    Query {
+        /// 检索关键词
+        terms: Vec<String>,
+        /// 项目根目录，默认为当前目录
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// 最多返回条数
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// 输出 JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -75,6 +93,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Init { path } => init(resolve(path)?),
         Command::Build { path } => cmd_build(resolve(path)?),
+        Command::Sync { path } => cmd_sync(resolve(path)?),
         Command::Status { path } => status(resolve(path)?),
         Command::Render { path, out, claude_md } => {
             cmd_render(resolve(path)?, out.as_deref(), claude_md)
@@ -88,6 +107,7 @@ fn main() -> Result<()> {
             force,
         ),
         Command::Domains { path, json } => cmd_domains(resolve(path)?, json),
+        Command::Query { path, terms, limit, json } => cmd_query(resolve(path)?, terms, limit, json),
     }
 }
 
@@ -139,6 +159,12 @@ fn cmd_build(root: PathBuf) -> Result<()> {
     let stats = build::run(&store, &root)?;
     let secs = started.elapsed().as_secs_f64();
 
+    print_stats(&stats, secs);
+    Ok(())
+}
+
+/// Shared summary printer for `build` and `sync`.
+fn print_stats(stats: &build::BuildStats, secs: f64) {
     println!("构建完成，耗时 {secs:.1}s");
     println!("  模块        {}", stats.modules);
     println!("  文件        {}", stats.files);
@@ -160,6 +186,14 @@ fn cmd_build(root: PathBuf) -> Result<()> {
     if stats.parse_errors > 0 {
         println!("  解析告警    {} 个文件含语法错误（已尽力抽取）", stats.parse_errors);
     }
+}
+
+fn cmd_sync(root: PathBuf) -> Result<()> {
+    let store = Store::open_existing(&root)?;
+    let started = std::time::Instant::now();
+    let stats = sync::run(&store, &root)?;
+    let secs = started.elapsed().as_secs_f64();
+    print_stats(&stats, secs);
     Ok(())
 }
 
@@ -279,6 +313,43 @@ fn cmd_domains(root: PathBuf, json: bool) -> Result<()> {
         println!("{name:<24} {files:>6} {tables:>6} {entries:>6} {conf:>8.2}");
     }
     println!("\n如需调整划分，编辑 .codeatlas/domains.toml 后重新 catlas build");
+    Ok(())
+}
+
+fn cmd_query(root: PathBuf, terms: Vec<String>, limit: usize, json: bool) -> Result<()> {
+    let store = Store::open_existing(&root)?;
+    let project_id = store.project_id()?;
+
+    // The index may be absent for a knowledge base built before search existed;
+    // fill it on demand rather than forcing a full rebuild.
+    let populated: i64 = store.conn.query_row("SELECT COUNT(*) FROM search_fts", [], |r| r.get(0))?;
+    if populated == 0 {
+        search::rebuild(&store, project_id)?;
+    }
+
+    let q = terms.join(" ");
+    if q.trim().is_empty() {
+        anyhow::bail!("请提供一个检索关键词，例如 `catlas query 特价`");
+    }
+    let hits = search::query(&store, project_id, &q, limit)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&hits)?);
+        return Ok(());
+    }
+
+    if hits.is_empty() {
+        println!("没有匹配「{q}」的结果。");
+        return Ok(());
+    }
+    println!("匹配「{q}」{} 条：\n", hits.len());
+    for h in &hits {
+        let where_ = h.file.as_deref().map(|f| format!("  @ {f}")).unwrap_or_default();
+        println!("[{}] {}{}", search::label(&h.kind, &h.subject_kind), h.title, where_);
+        if !h.snippet.is_empty() {
+            println!("      {}", h.snippet);
+        }
+    }
     Ok(())
 }
 
