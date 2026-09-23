@@ -63,7 +63,6 @@ fn git(root: &Path, args: &[&str]) -> Result<String> {
 /// `limit` bounds the walk: full history on a decade-old repository costs far
 /// more than it adds, and the vocabulary signal saturates quickly.
 pub fn log(root: &Path, limit: usize) -> Result<Vec<Commit>> {
-    // A record separator lets us parse subjects that themselves contain newlines.
     let raw = git(
         root,
         &[
@@ -75,7 +74,49 @@ pub fn log(root: &Path, limit: usize) -> Result<Vec<Commit>> {
             "--pretty=format:%x1e%H%x1f%ad%x1f%s%x1f",
         ],
     )?;
+    Ok(parse_commits(&raw))
+}
 
+/// Commits strictly newer than `old` and reachable from `new` (`old..new`).
+///
+/// This is the incremental slice `sync` fetches after a commit lands, instead of
+/// re-walking the whole history. Unbounded — a long-un-synced tree may yield many
+/// commits, but still far fewer than full history.
+pub fn log_range(root: &Path, old: &str, new: &str) -> Result<Vec<Commit>> {
+    let raw = git(
+        root,
+        &[
+            "log",
+            &format!("{old}..{new}"),
+            "--no-merges",
+            "--name-only",
+            "--date=iso-strict",
+            "--pretty=format:%x1e%H%x1f%ad%x1f%s%x1f",
+        ],
+    )?;
+    Ok(parse_commits(&raw))
+}
+
+/// True when `old` is an ancestor of (or equal to) `new`.
+///
+/// The guard for incremental ingestion: folding `old..new` into a snapshot taken
+/// at `old` is only sound when `old` is on `new`'s first-parent line. After a
+/// rebase or force-push this is false, and the caller falls back to a full walk.
+pub fn is_ancestor(root: &Path, old: &str, new: &str) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["merge-base", "--is-ancestor", old, new])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Parse the `%x1e … %x1f …` record stream [`log`] and [`log_range`] share.
+///
+/// A record separator (rather than newlines) lets us parse subjects that
+/// themselves contain newlines.
+fn parse_commits(raw: &str) -> Vec<Commit> {
     let mut commits = Vec::new();
     for rec in raw.split('\u{1e}') {
         let rec = rec.trim_start_matches('\n');
@@ -103,7 +144,55 @@ pub fn log(root: &Path, limit: usize) -> Result<Vec<Commit>> {
             files,
         });
     }
-    Ok(commits)
+    commits
+}
+
+/// Fold commits from `old..new` into a cached full-history snapshot.
+///
+/// `hist`/`commits` are the state up to `old`; `inc` is `old..new` (newest
+/// first). The result is byte-for-byte what a full walk at `new` would produce,
+/// without walking the old history again.
+pub fn apply_incremental(
+    hist: &mut BTreeMap<String, FileHistory>,
+    commits: &mut Vec<Commit>,
+    inc: &[Commit],
+    limit: usize,
+) {
+    // Subject list: every commit in `inc` is newer than everything cached, so it
+    // goes in front; the cached tail is already the newest-`limit` of old history,
+    // so truncating after the merge keeps the newest-`limit` of the combined tree.
+    let mut merged = Vec::with_capacity(inc.len() + commits.len());
+    merged.extend(inc.iter().cloned());
+    merged.append(commits);
+    merged.truncate(limit);
+    *commits = merged;
+
+    // Churn: count touches per file in `inc`, tracking the newest and oldest date
+    // in the slice. `inc` is newest-first, so the first sighting is the newest and
+    // the last is the oldest.
+    let mut delta: BTreeMap<String, (String, String, u32)> = BTreeMap::new();
+    for c in inc {
+        let date = &c.authored_at;
+        for f in &c.files {
+            let e = delta
+                .entry(f.clone())
+                .or_insert_with(|| (date.clone(), date.clone(), 0));
+            e.1 = date.clone(); // overwritten each pass → oldest wins
+            e.2 += 1;
+        }
+    }
+    for (path, (newest, oldest, count)) in delta {
+        let h = hist.entry(path).or_default();
+        h.commit_count += count;
+        // New commits are newer than anything cached, so the newest sighting is
+        // the file's new last touch.
+        h.last_commit_at = Some(newest);
+        // A file with no cached entry first appears in this slice; its oldest
+        // sighting is its true first touch.
+        if h.first_commit_at.is_none() {
+            h.first_commit_at = Some(oldest);
+        }
+    }
 }
 
 /// Per-file churn and first/last touch, over the whole history.
@@ -236,5 +325,108 @@ mod tests {
     fn head_is_none_outside_a_repo() {
         let dir = tempfile::tempdir().unwrap();
         assert!(head(dir.path()).is_none());
+    }
+
+    #[test]
+    fn log_range_returns_only_new_commits() {
+        let dir = fixture();
+        let full = log(dir.path(), 50).unwrap();
+        assert_eq!(full.len(), 2);
+        let old = &full[1].sha; // oldest
+        let new = &full[0].sha; // newest
+        let range = log_range(dir.path(), old, new).unwrap();
+        assert_eq!(range.len(), 1);
+        assert_eq!(range[0].subject, "优惠券模板优化");
+    }
+
+    #[test]
+    fn is_ancestor_detects_rebased_history() {
+        let dir = fixture();
+        let full = log(dir.path(), 50).unwrap();
+        assert!(is_ancestor(dir.path(), &full[1].sha, &full[0].sha));
+        // A commit is an ancestor of itself.
+        assert!(is_ancestor(dir.path(), &full[0].sha, &full[0].sha));
+        // A newer commit is not an ancestor of an older one.
+        assert!(!is_ancestor(dir.path(), &full[0].sha, &full[1].sha));
+    }
+
+    #[test]
+    fn apply_incremental_folds_new_commits_into_snapshot() {
+        // Cached snapshot at HEAD=A: one commit touching a.java.
+        let mut hist: BTreeMap<String, FileHistory> = BTreeMap::new();
+        hist.insert(
+            "a.java".into(),
+            FileHistory {
+                commit_count: 1,
+                first_commit_at: Some("2020-01-01".into()),
+                last_commit_at: Some("2020-01-01".into()),
+            },
+        );
+        let mut commits: Vec<Commit> = vec![Commit {
+            sha: "oldsha".into(),
+            authored_at: "2020-01-01".into(),
+            subject: "初始".into(),
+            files: vec!["a.java".into()],
+        }];
+
+        // New commits since A (newest first).
+        let inc = vec![
+            Commit {
+                sha: "new2".into(),
+                authored_at: "2020-03-01".into(),
+                subject: "改 a".into(),
+                files: vec!["a.java".into()],
+            },
+            Commit {
+                sha: "new1".into(),
+                authored_at: "2020-02-01".into(),
+                subject: "加 b".into(),
+                files: vec!["b.java".into()],
+            },
+        ];
+
+        apply_incremental(&mut hist, &mut commits, &inc, 4000);
+
+        // Subjects: new commits first, then cached.
+        assert_eq!(commits.len(), 3);
+        assert_eq!(commits[0].subject, "改 a");
+        assert_eq!(commits[1].subject, "加 b");
+        assert_eq!(commits[2].subject, "初始");
+
+        // Churn: a.java gained one touch; last_commit_at advanced.
+        let a = &hist["a.java"];
+        assert_eq!(a.commit_count, 2);
+        assert_eq!(a.first_commit_at.as_deref(), Some("2020-01-01"));
+        assert_eq!(a.last_commit_at.as_deref(), Some("2020-03-01"));
+        // b.java is brand new: both bounds come from the slice.
+        let b = &hist["b.java"];
+        assert_eq!(b.commit_count, 1);
+        assert_eq!(b.first_commit_at.as_deref(), Some("2020-02-01"));
+        assert_eq!(b.last_commit_at.as_deref(), Some("2020-02-01"));
+    }
+
+    #[test]
+    fn apply_incremental_truncates_to_limit() {
+        let mut commits: Vec<Commit> = vec![Commit {
+            sha: "old".into(),
+            authored_at: "2020-01-01".into(),
+            subject: "旧".into(),
+            files: vec![],
+        }];
+        let inc = (0..5)
+            .map(|i| Commit {
+                sha: format!("n{i}"),
+                authored_at: "2020-01-01".into(),
+                subject: format!("新{i}"),
+                files: vec![],
+            })
+            .collect::<Vec<_>>();
+        let mut hist = BTreeMap::new();
+        apply_incremental(&mut hist, &mut commits, &inc, 3);
+        assert_eq!(commits.len(), 3);
+        // Newest survive; the cached tail fell off.
+        assert_eq!(commits[0].subject, "新0");
+        assert_eq!(commits[2].subject, "新2");
+        assert!(commits.iter().all(|c| c.subject != "旧"));
     }
 }

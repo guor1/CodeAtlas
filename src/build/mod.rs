@@ -38,11 +38,15 @@ const GIT_LOG_LIMIT: usize = 4000;
 
 /// The two git signals the pipeline needs, with a `HEAD`-keyed cache in front.
 ///
-/// Git history is immutable once `HEAD` stops moving, so the expensive walks
-/// ([`git::log`], [`git::file_history`]) are replayed from `git_cache` when the
-/// head is unchanged and only re-run when a commit lands. `git_branches` is
-/// deliberately *not* cached — remote branch pointers move on `git fetch` without
-/// `HEAD` changing, and it is a single fast command anyway.
+/// Cache layers, cheapest first:
+///
+/// 1. `HEAD` unchanged → replay both walks from `git_cache`.
+/// 2. `HEAD` moved forward (cached head is an ancestor of `HEAD`) → fetch only
+///    `old..new`, fold into the cached snapshot.
+/// 3. Otherwise (first run, rebase, force-push) → full walk.
+///
+/// `git_branches` is deliberately *not* cached — remote branch pointers move on
+/// `git fetch` without `HEAD` changing, and it is a single fast command anyway.
 fn git_signals(
     store: &Store,
     root: &Path,
@@ -56,6 +60,8 @@ fn git_signals(
     }
     let Some(head) = git::head(root) else { return empty };
     let limit = GIT_LOG_LIMIT as i64;
+
+    // Layer 1: exact head hit.
     if let Ok(Some((hist_json, commits_json))) = store.cached_git(&head, limit) {
         if let (Ok(hist), Ok(commits)) = (
             serde_json::from_str::<BTreeMap<String, git::FileHistory>>(&hist_json),
@@ -64,15 +70,45 @@ fn git_signals(
             return (hist, commits);
         }
     }
-    let hist = git::file_history(root).unwrap_or_default();
-    let commits = git::log(root, GIT_LOG_LIMIT).unwrap_or_default();
-    // Best effort: a cache write that fails must not fail the build.
-    if let (Ok(hj), Ok(cj)) = (serde_json::to_string(&hist), serde_json::to_string(&commits)) {
-        if store.cache_git(&head, limit, &hj, &cj).is_ok() {
-            let _ = store.prune_git_cache(&head);
+
+    // Layer 2: incremental — cached head is a real ancestor of the current head.
+    if let Ok(Some(old_head)) = store.cached_head(limit) {
+        if old_head != head && git::is_ancestor(root, &old_head, &head) {
+            if let Ok(Some((hist_json, commits_json))) = store.cached_git(&old_head, limit) {
+                if let (Ok(mut hist), Ok(mut commits)) = (
+                    serde_json::from_str::<BTreeMap<String, git::FileHistory>>(&hist_json),
+                    serde_json::from_str::<Vec<git::Commit>>(&commits_json),
+                ) {
+                    let inc = git::log_range(root, &old_head, &head).unwrap_or_default();
+                    git::apply_incremental(&mut hist, &mut commits, &inc, GIT_LOG_LIMIT);
+                    store_git(store, &head, limit, &hist, &commits);
+                    return (hist, commits);
+                }
+            }
         }
     }
+
+    // Layer 3: full walk.
+    let hist = git::file_history(root).unwrap_or_default();
+    let commits = git::log(root, GIT_LOG_LIMIT).unwrap_or_default();
+    store_git(store, &head, limit, &hist, &commits);
     (hist, commits)
+}
+
+/// Persist a freshly computed git snapshot; best effort so a cache write never
+/// fails the build.
+fn store_git(
+    store: &Store,
+    head: &str,
+    limit: i64,
+    hist: &BTreeMap<String, git::FileHistory>,
+    commits: &[git::Commit],
+) {
+    if let (Ok(hj), Ok(cj)) = (serde_json::to_string(hist), serde_json::to_string(commits)) {
+        if store.cache_git(head, limit, &hj, &cj).is_ok() {
+            let _ = store.prune_git_cache(head);
+        }
+    }
 }
 
 pub fn run(store: &Store, root: &Path) -> Result<BuildStats> {

@@ -223,6 +223,19 @@ impl Store {
             .optional()?)
     }
 
+    /// The cached head for this `GIT_LOG_LIMIT`, if any — the "old" end of the
+    /// `old..new` range `sync` ingests.
+    pub fn cached_head(&self, commit_log_limit: i64) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT head FROM git_cache WHERE commit_log_limit = ?1",
+                params![commit_log_limit],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     /// Store the two expensive git walks so a later `sync` at the same `HEAD`
     /// replays them instead of re-running them.
     pub fn cache_git(
