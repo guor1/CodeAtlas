@@ -168,8 +168,14 @@ pub fn rebuild(store: &Store, project_id: i64) -> Result<usize> {
             }
         }
         {
+            // Insights enter the index only after human confirmation
+            // (`status = 'confirmed'`); candidates and rejects are visible via
+            // `catlas review` alone, so machine-proposed claims cannot pose as
+            // established knowledge in a search result.
             let mut stmt = tx.prepare(
-                "SELECT id, COALESCE(title, kind), kind, body_md FROM notes WHERE project_id = ?1",
+                "SELECT id, COALESCE(title, kind), kind, body_md FROM notes
+                 WHERE project_id = ?1
+                   AND (kind NOT IN ('business_rule','landmine','term') OR status = 'confirmed')",
             )?;
             let rows: Vec<(i64, String, String, String)> = stmt
                 .query_map(params![project_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
@@ -320,6 +326,11 @@ pub fn label(kind: &str, subject_kind: &str) -> String {
         "file" => ("文件", file_label(subject_kind)),
         "table" => ("数据表", ""),
         "domain" => ("领域", ""),
+        // Insights ride the notes pipeline; name their kind instead of the
+        // generic bucket so a hit reads as a confirmed business claim.
+        "note" if crate::insight::KINDS.contains(&subject_kind) => {
+            ("洞察", crate::insight::kind_label(subject_kind))
+        }
         "note" => ("文档", subject_kind),
         "glossary" => ("术语", ""),
         "commit" => ("提交", ""),

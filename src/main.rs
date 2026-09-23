@@ -98,6 +98,24 @@ enum Command {
         #[arg(long)]
         path: Option<PathBuf>,
     },
+    /// 人工审核会话沉淀的洞察：候选不进检索，确认后进入
+    Review {
+        /// 项目根目录，默认为当前目录（会向上查找 .codeatlas/）
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// 确认指定 id 的候选（进入检索）
+        #[arg(long, conflicts_with = "reject")]
+        accept: Option<i64>,
+        /// 拒绝指定 id 的候选（留档，不进检索）
+        #[arg(long, conflicts_with = "accept")]
+        reject: Option<i64>,
+        /// 查看哪个状态：candidate/confirmed/rejected/all
+        #[arg(long, default_value = "candidate")]
+        status: String,
+        /// 输出 JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -118,6 +136,9 @@ fn main() -> Result<()> {
             cmd_query(existing(path)?, terms, limit, json)
         }
         Command::Mcp { path } => codeatlas::mcp::run(&existing(path)?),
+        Command::Review { path, accept, reject, status, json } => {
+            cmd_review(existing(path)?, accept, reject, &status, json)
+        }
     }
 }
 
@@ -382,6 +403,66 @@ fn cmd_query(root: PathBuf, terms: Vec<String>, limit: usize, json: bool) -> Res
         if !h.snippet.is_empty() {
             println!("      {}", h.snippet);
         }
+    }
+    Ok(())
+}
+
+fn cmd_review(
+    root: PathBuf,
+    accept: Option<i64>,
+    reject: Option<i64>,
+    status: &str,
+    json: bool,
+) -> Result<()> {
+    let store = Store::open_existing(&root)?;
+    let project_id = store.project_id()?;
+
+    if let Some(id) = accept.or(reject) {
+        let ok = codeatlas::insight::review(&store, project_id, id, accept.is_some())?;
+        if !ok {
+            anyhow::bail!("id {id} 不是待确认的候选洞察（不存在、已处理或非洞察）");
+        }
+        println!("已{}洞察 {id}", if accept.is_some() { "确认" } else { "拒绝" });
+        return Ok(());
+    }
+
+    let rows = codeatlas::insight::list(&store, project_id, status)?;
+    if json {
+        let v: Vec<_> = rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.id, "kind": r.kind, "title": r.title, "status": r.status,
+                    "domain": r.domain, "body": r.body, "evidence": r.evidence, "created": r.created,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&v)?);
+        return Ok(());
+    }
+
+    if rows.is_empty() {
+        let hint = match status {
+            "candidate" => "——会话中没有沉淀任何洞察，或都已处理。在 Claude Code 里让它调 propose_insight 沉淀分析结论。",
+            _ => "",
+        };
+        println!("没有 {status} 状态的洞察{hint}");
+        return Ok(());
+    }
+    println!("{status} 状态的洞察 {} 条：\n", rows.len());
+    for r in &rows {
+        let domain = r.domain.as_deref().map(|d| format!("（领域 {d}）")).unwrap_or_default();
+        let label = codeatlas::insight::kind_label(&r.kind);
+        println!("#{id} [{label}] {title}{domain}", id = r.id, title = r.title);
+        for ev in &r.evidence {
+            println!("    证据  {ev}");
+        }
+        let body: String = r.body.lines().take(4).collect::<Vec<_>>().join("\n    ");
+        println!("    {body}");
+        if r.status == "candidate" {
+            println!("    确认：catlas review --accept {}   拒绝：catlas review --reject {}", r.id, r.id);
+        }
+        println!();
     }
     Ok(())
 }

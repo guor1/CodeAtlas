@@ -15,6 +15,7 @@
 
 pub mod build;
 pub mod extract;
+pub mod insight;
 pub mod llm;
 pub mod mcp;
 pub mod render;

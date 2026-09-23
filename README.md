@@ -48,7 +48,23 @@ claude mcp add catlas -s project -- catlas mcp
 因此在子目录里跑也没问题。省掉它写出来的 `.mcp.json` 不含机器相关的绝对路径，可以提交给团队共用。
 需要固定指向某个项目（例如从别处启动会话）时再显式给 `--path /path/to/legacy-project`。
 
-暴露三个只读工具：`search`（全文检索）、`domains`（领域清单）、`status`（各层统计）。
+暴露三个只读工具：`search`（全文检索）、`domains`（领域清单）、`status`（各层统计），
+以及一个写入工具 `propose_insight`（见下）。
+
+## 会话中沉淀洞察
+
+Claude Code 分析代码时得出的业务结论，可以让它调 `propose_insight` 沉淀为**候选洞察**
+（业务规则 / 坑 / 术语三种模板，必须附代码位置作证据），然后人工把关：
+
+```bash
+catlas review                  # 列出候选：结论、证据位置、相近已有知识提示
+catlas review --accept 12      # 确认 → 进入全文检索，后续会话与同事可直接查到
+catlas review --reject 13      # 拒绝 → 留档审计，永不进检索
+```
+
+候选在确认前不出现在 `search` 结果里——机器写的主张必须先过人工这道闸，
+确认动作只存在于 CLI，MCP 上没有转正工具。洞察不受 `build`/`sync` 影响，
+失效是人工行为（reject），不会随代码变更被自动清除。
 
 ## 产物结构
 
