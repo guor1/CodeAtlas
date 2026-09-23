@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeAtlas 改进建议 —— 对照同类项目</title>
+<style>
+  :root {
+    --bg: #fbfbf9; --surface: #ffffff; --border: #e3e2dd;
+    --text: #22221f; --muted: #6b6a64;
+    --accent: #0f6b62; --accent-soft: #e6f2f0;
+    --warn: #8a5a12; --warn-soft: #fbf1df;
+    --code-bg: #f4f4f1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a; --surface: #1e1e22; --border: #33333a;
+      --text: #e8e8e4; --muted: #a0a099;
+      --accent: #5fbfb2; --accent-soft: #14312e;
+      --warn: #d9ab63; --warn-soft: #2e2618;
+      --code-bg: #26262b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px 120px; }
+
+  header.hero {
+    border-bottom: 1px solid var(--border); padding: 64px 0 40px;
+  }
+  .eyebrow {
+    font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin: 0 0 14px;
+  }
+  h1 { font-size: 36px; line-height: 1.28; margin: 0 0 16px; letter-spacing: -.01em; }
+  .lede { font-size: 17.5px; color: var(--muted); margin: 0; max-width: 64ch; }
+
+  h2 { font-size: 23px; margin: 60px 0 4px; letter-spacing: -.01em; }
+  h2 .num { display: inline-block; min-width: 1.6em; color: var(--accent);
+            font-variant-numeric: tabular-nums; }
+  h3 { font-size: 17px; margin: 34px 0 6px; }
+  .sub { color: var(--muted); font-size: 15px; margin-top: 2px; }
+  p { margin: 12px 0; }
+  ul, ol { margin: 12px 0; padding-left: 1.4em; }
+  li { margin: 6px 0; }
+  a { color: var(--accent); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .875em; background: var(--code-bg);
+    padding: .12em .38em; border-radius: 4px;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 18px; overflow-x: auto;
+    font-size: 13px; line-height: 1.6; margin: 14px 0;
+  }
+  pre code { background: none; padding: 0; }
+
+  nav.toc {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 24px; margin: 36px 0 0;
+  }
+  nav.toc p { margin: 0 0 8px; font-size: 12px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  nav.toc ol { margin: 0; padding-left: 1.3em; }
+  nav.toc li { margin: 3px 0; font-size: 14.5px; }
+  nav.toc a { text-decoration: none; color: var(--text); }
+  nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout {
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    border-radius: 0 8px 8px 0; padding: 14px 20px; margin: 20px 0;
+  }
+  .callout.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .callout > :first-child { margin-top: 0; }
+  .callout > :last-child { margin-bottom: 0; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 22px; margin: 18px 0;
+  }
+
+  /* proposal blocks */
+  .prop {
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); padding: 16px 20px; margin: 16px 0;
+  }
+  .prop > .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .prop .title { font-weight: 650; font-size: 15.5px; }
+  .prop .src {
+    font-size: 12px; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px;
+    white-space: nowrap;
+  }
+  .prop dl { margin: 10px 0 0; font-size: 14.5px; }
+  .prop dt {
+    font-weight: 650; color: var(--accent); font-size: 12.5px;
+    letter-spacing: .04em; text-transform: uppercase; margin-top: 10px;
+  }
+  .prop dd { margin: 3px 0 0; }
+  .tag {
+    display: inline-block; font-size: 11.5px; font-weight: 700;
+    letter-spacing: .05em; padding: 1px 8px; border-radius: 4px; white-space: nowrap;
+  }
+  .tag.now  { background: #dceee9; color: #0c5f55; }
+  .tag.next { background: var(--warn-soft); color: var(--warn); }
+  .tag.later{ background: var(--code-bg); color: var(--muted); }
+  @media (prefers-color-scheme: dark) { .tag.now { background: #14312e; color: #6fd3c4; } }
+
+  table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border);
+           vertical-align: top; }
+  th { font-size: 12.5px; letter-spacing: .04em; text-transform: uppercase;
+       color: var(--muted); font-weight: 600; border-bottom-width: 2px; }
+
+  footer {
+    margin-top: 72px; padding-top: 22px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 14px;
+  }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 44px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <p class="eyebrow">CodeAtlas · 改进建议</p>
+  <h1>对照同类项目，CodeAtlas 还该改什么</h1>
+  <p class="lede">
+    <a href="overview.html">核心机制文档</a>第 09 节的优化方向是从<em>内部缺陷</em>推出来的；
+    这份是从<em>外部对照</em>推出来的——把 RepoAgent、RepoDoc、CodeGraph、Potpie、
+    RepoWiki、CodeScene 这些项目已经解决的问题，逐条对回 CodeAtlas 的现状。
+  </p>
+</header>
+
+<nav class="toc">
+  <p>目录</p>
+  <ol>
+    <li><a href="#a">结论先行：该借什么、不该借什么</a></li>
+    <li><a href="#b">结构性缺口（别人解决了，我们没有）</a></li>
+    <li><a href="#c">低成本改进（数据已在库里）</a></li>
+    <li><a href="#d">被同类项目反向印证的设计</a></li>
+    <li><a href="#e">明确不该借的部分</a></li>
+    <li><a href="#f">落地顺序</a></li>
+  </ol>
+</nav>
+
+<!-- ─────────────────────────── A -->
+<h2 id="a"><span class="num">A</span>结论先行：该借什么、不该借什么</h2>
+
+<p>
+把六个参照项目的差异过一遍后，可归纳成三句话：
+</p>
+
+<div class="callout">
+  <ol style="margin:0">
+    <li>
+      <strong>最该补的是「让文档自己保持新鲜」的触发机制。</strong>
+      CodeAtlas 有一整套 digest 失效判定，但<em>没有任何东西会去触发它</em>——
+      没人主动跑 <code>catlas sync</code>，失效判定就等于没有。RepoAgent 用 git 钩子解决了这件事。
+    </li>
+    <li>
+      <strong>最该补的第二件是「知识不止在仓库里」。</strong>
+      CodeAtlas 只读代码 + git，而 Potpie 还索引 PR、issue、Jira、Notion。
+      老项目里「为什么这么做」的答案大量躺在需求单和 PR 讨论里，这是我们目前拿不到的一整类证据。
+    </li>
+    <li>
+      <strong>最该抵制的是「把自己做成通用工具」。</strong>
+      CodeGraph 支持 20 种语言、RepoAgent 已有 1k star，在通用性上追是稳输的。
+      CodeAtlas 的立足点是对特定老技术栈与中文语境的贴合度，扩语言优先级应当排在最后。
+    </li>
+  </ol>
+</div>
+
+<!-- ─────────────────────────── B -->
+<h2 id="b"><span class="num">B</span>结构性缺口</h2>
+<p class="sub">这些不是「做得不够好」，而是整类能力的缺失——别人有，我们没有。</p>
+
+<div class="prop">
+  <div class="head">
+    <span class="tag now">优先做</span>
+    <span class="title">B1 · 没有任何机制触发更新，失效判定形同虚设</span>
+    <span class="src">对照 RepoAgent</span>
+  </div>
+  <dl>
+    <dt>现状</dt>
+    <dd>
+      已核实：代码里<strong>没有任何 hook / CI / Actions 集成</strong>，仓库也没有 <code>.github/</code>。
+      整条链路是「人想起来 → 手动跑 <code>catlas sync</code> → 手动跑 <code>catlas render</code>」。
+    </dd>
+    <dt>别人怎么做</dt>
+    <dd>
+      RepoAgent 提供 pre-commit 钩子与 GitHub Actions 集成，提交即更新文档；
+      RepoWiki 用 <code>.repowiki-state.json</code> 记录状态，重跑只重算源文件变了的页面。
+    </dd>
+    <dt>为什么这是最要紧的一条</dt>
+    <dd>
+      第 04 节把「文档不腐烂」归功于 <code>source_digest</code> 自动失效——
+      但严格说这只做到了「<em>能判定</em>哪条过期」，没做到「<em>会去</em>判定」。
+      没有触发器，半年后库里仍是半年前的快照，与手写文档腐烂的结局并无区别。
+      <strong>这是全项目投入产出比最高的一处缺口：机制早已齐备，缺的只是一个触发点。</strong>
+    </dd>
+    <dt>建议</dt>
+    <dd>
+      加 <code>catlas hook install</code>，装一个 post-commit（而非 pre-commit：避免拖慢提交）钩子后台跑 <code>sync</code>；
+      再给一份 CI 模板，在 CI 里跑 <code>sync</code> 并把「新增的 stale 条目数」作为报告输出。
+      不必自动调 LLM 花钱——<strong>只要把「哪些结论已过期」持续暴露出来</strong>，人就知道何时该深挖。
+    </dd>
+  </dl>
+</div>
+
+<div class="prop">
+  <div class="head">
+    <span class="tag next">值得做</span>
+    <span class="title">B2 · 只读仓库，拿不到 PR / issue / 需求单里的业务语境</span>
+    <span class="src">对照 Potpie</span>
+  </div>
+  <dl>
+    <dt>现状</dt>
+    <dd>
+      已核实：证据源只有源码、配置、git 提交。<strong>不摄取 PR、issue、工单、文档系统</strong>。
+    </dd>
+    <dt>别人怎么做</dt>
+    <dd>
+      Potpie 把代码连同 PR、issue、review、Linear/Jira、Notion/Confluence 一起做成「上下文图」，
+      理由正是：决策的「为什么」不在代码里。
+    </dd>
+    <dt>为什么对老项目尤其重要</dt>
+    <dd>
+      第 09 节承认了一个根本局限：「没留痕的业务规则抽不出来」。
+      但更准确地说——<strong>很多规则其实留了痕，只是痕迹不在仓库里</strong>，
+      而在 PR 的争论、工单的验收标准、review 的追问里。这不是模型能力问题，是证据源覆盖问题，
+      属于可以工程解决的那一类。
+    </dd>
+    <dt>建议</dt>
+    <dd>
+      按 probe 架构加一个可选的外部证据 probe，先只做最容易拿且信息密度最高的一种
+      （内部 GitLab/GitHub 的 MR 标题 + 描述 + 关联工单号），
+      与 commit subject 同层存放并<strong>标注来源</strong>。
+      注意两点：这类源的可靠性低于代码，必须区分置信度；且涉及把内部工单内容并入知识库，
+      需要先确认合规边界。
+    </dd>
+  </dl>
+</div>
+
+<div class="prop">
+  <div class="head">
+    <span class="tag next">值得做</span>
+    <span class="title">B3 · 只在一个项目上验证过，且没有任何可比较的指标</span>
+    <span class="src">对照 CodeGraph / RepoDoc / RepoAgent</span>
+  </div>
+  <dl>
+    <dt>现状</dt>
+    <dd>
+      验证材料是：127 个单测（覆盖确定性部分）+ 一个项目的构建统计 + 一个领域的人工抽查。
+      <strong>没有任何可对外比较的质量或效率指标。</strong>
+    </dd>
+    <dt>别人怎么做</dt>
+    <dd>
+      这个领域已经收敛出一套通行度量：CodeGraph 报「省 35% 成本、少 70% 工具调用、快 49%」；
+      RepoDoc 报「API 覆盖率 +32.5%、省 85% token、增量更新省时 73%、更新召回率 +10.2%」。
+      它们都是作者自评，但<strong>至少是可被质疑、可被复现的数字</strong>。
+    </dd>
+    <dt>建议</dt>
+    <dd>
+      不必追论文式的完整评测，选两个能自测且直接对应价值主张的指标即可：
+      ① <strong>token 成本</strong>——每个领域深挖的实际花费，让「按需深挖」这个卖点可被定价；
+      ② <strong>agent 工具调用削减</strong>——同一组业务问题，接 MCP 前后 Claude Code 的工具调用与 token 对比。
+      第二个指标同时能回答「这东西到底有没有用」这个绕不开的问题。
+    </dd>
+  </dl>
+</div>
+
+<!-- ─────────────────────────── C -->
+<h2 id="c"><span class="num">C</span>低成本改进</h2>
+<p class="sub">共同点：<strong>所需数据已经在库里</strong>，只是没接出去或没渲染出来。</p>
+
+<div class="prop">
+  <div class="head">
+    <span class="tag now">优先做</span>
+    <span class="title">C1 · 没有「从哪读起」的入口路径</span>
+    <span class="src">对照 RepoWiki</span>
+  </div>
+  <dl>
+    <dt>现状</dt>
+    <dd>
+      渲染产出 43 个领域档案，但<strong>不排优先级</strong>。
+      已核实 churn 目前只用于领域投票和源码节选，<em>没有</em>用来给领域排序。
+      新人打开 <code>.knowledge/</code> 面对 43 个平铺的领域，仍然不知道先看哪个。
+    </dd>
+    <dt>别人怎么做</dt>
+    <dd>RepoWiki 用 PageRank 算出一条「start here」阅读路径。</dd>
+    <dt>为什么我们能做得更好</dt>
+    <dd>
+      PageRank 只看引用结构，而 CodeAtlas 手上的信号更贴业务：
+      入口数量、链路条数、churn、领域规模、涉及表数。
+      <strong>加权排个序就能给出「这个项目最该先理解的 5 个领域」</strong>——
+      这恰恰是接手者的第一个问题，而现在文档没有回答它。
+    </dd>
+    <dt>建议</dt>
+    <dd>README 顶部加「建议阅读顺序」小节，列前 5~8 个领域并给出入选理由（入口多 / 改动频繁 / 表多）。</dd>
+  </dl>
+</div>
+
+<div class="prop">
+  <div class="head">
+    <span class="tag now">优先做</span>
+    <span class="title">C2 · MCP 工具面太窄，库里已有的答案没接出去</span>
+    <span class="src">对照 CodeGraph / Potpie / OpenDeepWiki</span>
+  </div>
+  <dl>
+    <dt>现状</dt>
+    <dd>只有 <code>search</code> / <code>domains</code> / <code>status</code> 三个工具。</dd>
+    <dt>缺口</dt>
+    <dd>
+      AI 接手老项目最常问的恰恰是三个<strong>库里已有答案</strong>的问题：
+      「这个接口最终动了哪些表」（<code>traces</code> 表里有）、
+      「这张表被哪些入口写」（反查即得）、
+      「这个领域有什么坑」（深挖出的 landmines 已存在）。
+      另外 CodeGraph 那组「省 70% 工具调用」的收益，前提是工具能一次答到点上——
+      工具面窄就等于把 agent 推回去 grep。
+    </dd>
+    <dt>建议</dt>
+    <dd>
+      补 <code>trace</code>、<code>table_usage</code>、<code>capability</code>、<code>domain_dossier</code> 四个只读工具。
+      <strong>纯接线，无新机制</strong>，是整份文档里最便宜的一项。
+    </dd>
+  </dl>
+</div>
+
+<div class="prop">
+  <div class="head">
+    <span class="tag next">值得做</span>
+    <span class="title">C3 · 没有任何图，而链路数据天然适合画图</span>
+    <span class="src">对照 RepoWiki / deepwiki-open / GitDiagram</span>
+  </div>
+  <dl>
+    <dt>现状</dt>
+    <dd>已核实：渲染层<strong>不产出任何 Mermaid 或图表</strong>，全是文字与表格。</dd>
+    <dt>为什么成本很低</dt>
+    <dd>
+      455 条「入口 → … → 表」链路和领域间的调用关系<strong>已经是图结构</strong>，
+      转成 Mermaid 只是换个输出格式；而 GitLab、GitHub、VS Code、Obsidian 都原生渲染 Mermaid，
+      不需要任何额外设施。
+    </dd>
+    <dt>建议</dt>
+    <dd>
+      领域档案里嵌两张：领域间依赖图、以及该领域核心入口的链路图（节点数需设上限，否则会糊成一团）。
+      不做交互式大图——那属于产品化投入，与「给 agent 用」的定位无关。
+    </dd>
+  </dl>
+</div>
+
+<div class="prop">
+  <div class="head">
+    <span class="tag later">可选</span>
+    <span class="title">C4 · 没有独立的问答入口，非 Claude Code 用户无从使用</span>
+    <span class="src">对照 deepwiki-open / autodoc / Potpie</span>
+  </div>
+  <dl>
+    <dt>现状</dt>
+    <dd>
+      <code>catlas query</code> 是关键词检索，不是问答。
+      「这个系统的优惠券怎么算」这类问题必须经 Claude Code 走 MCP 才能回答。
+    </dd>
+    <dt>取舍</dt>
+    <dd>
+      这其实是<strong>有意为之</strong>的设计：问答循环交给 Claude Code，工具只当数据源，避免重复造壳。
+      唯一的实际损失是没装 Claude Code 的人用不上。
+      建议排在末位——真要做也只是「检索 + 拼证据 + 调一次 LLM」的薄封装（<code>catlas ask</code>），
+      而不是自建 Web 界面。
+    </dd>
+  </dl>
+</div>
+
+<div class="prop">
+  <div class="head">
+    <span class="tag later">可选</span>
+    <span class="title">C5 · churn 只当了领域信号，没产出「风险地图」</span>
+    <span class="src">对照 CodeScene</span>
+  </div>
+  <dl>
+    <dt>机会</dt>
+    <dd>
+      CodeScene 的立身之本是「热点」——既复杂又频繁变更的代码。
+      CodeAtlas 已经有每文件 churn、也有领域划分，
+      <strong>两者一交叉就能得到一个别人给不出的产出：哪个业务领域风险最高</strong>
+      （改动最频繁 × 链路最长 × 表最多 × 无人留注释）。
+    </dd>
+    <dt>为什么值得</dt>
+    <dd>
+      这不是从别人那里补短板，而是<em>用已有数据换一个新视角</em>：
+      从「这个系统在做什么业务」延伸到「这个系统哪块最危险」——
+      对接手者的决策价值很高，且几乎不增加抽取成本。排在可选是因为它不解决现有缺陷，属于加分项。
+    </dd>
+  </dl>
+</div>
+
+<!-- ─────────────────────────── D -->
+<h2 id="d"><span class="num">D</span>被同类项目反向印证的设计</h2>
+<p class="sub">对照的另一半收益：确认哪些地方不用改。</p>
+
+<div class="card">
+  <p style="margin-top:0">
+    <strong>增量更新优于全量重生成——RepoDoc 用数据证实了这一点。</strong>
+    它报告增量更新的<em>召回率比全量重生成高 10.2%</em>。这个结果值得留意：
+    直觉会认为全量重算更准，但全量重算会让每条结论重新承受一次 LLM 随机性，
+    已经正确的结论可能被改坏。CodeAtlas 的 digest 失效 + 稳定键 relink
+    （只重算证据变了的条目、其余原样保留）正好落在被证实更优的一侧，
+    <strong>不必因为「全量更彻底」而动摇</strong>。
+  </p>
+  <p>
+    <strong>按功能内聚而非物理布局聚类是对的。</strong>
+    RepoDoc 独立得出了同一结论（module clustering by functional cohesion）。
+    这说明「包结构不是业务边界」不是我们一个项目的特殊观察，而是这类工具的共识。
+  </p>
+  <p style="margin-bottom:0">
+    <strong>MCP 是正确的接入面。</strong>
+    CodeGraph、Potpie、OpenDeepWiki、Codebase-Memory 全都走 MCP。
+    选型上无需再犹豫，要补的只是工具数量（C2）。
+  </p>
+</div>
+
+<!-- ─────────────────────────── E -->
+<h2 id="e"><span class="num">E</span>明确不该借的部分</h2>
+<p class="sub">对照最容易犯的错，是把别人的长处当成自己的待办。</p>
+
+<table>
+  <thead><tr><th>别人的能力</th><th>为什么不该追</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>多语言支持</strong><br><span style="color:var(--muted);font-size:13.5px">CodeGraph 20 种语言</span></td>
+      <td>目标是公司内部 Java 老项目。扩语言会摊薄唯一的优势（对特定老栈脏细节的贴合），
+        且第 09 节已指出 probe 抽象尚未被第二种栈检验——<strong>先用一个真实异构项目校准抽象，再谈扩展</strong>。</td>
+    </tr>
+    <tr>
+      <td><strong>符号级检索与调用图定位</strong></td>
+      <td>CodeGraph 做得更好。它与 CodeAtlas 是互补关系（一个找代码、一个讲业务），
+        重做只是浪费。<strong>更划算的方向是反过来消费它</strong>：
+        加一个可选 probe 直接读 CodeGraph 的索引，省掉自己的部分解析。</td>
+    </tr>
+    <tr>
+      <td><strong>逐文件 / 逐对象 API 文档</strong><br><span style="color:var(--muted);font-size:13.5px">RepoAgent、autodoc</span></td>
+      <td>产出按代码结构组织，正是 CodeAtlas 刻意不做的那一类。老项目缺的不是「这个方法做什么」
+        （看代码就知道），而是「这属于什么业务、有什么坑」。</td>
+    </tr>
+    <tr>
+      <td><strong>Web 界面、多语言翻译、思维导图</strong><br><span style="color:var(--muted);font-size:13.5px">OpenDeepWiki、deepwiki-open</span></td>
+      <td>产品化投入，与「人读 Markdown + agent 走 MCP」的定位正交。
+        投进去的时间从可信度改进里挪走，不划算。</td>
+    </tr>
+    <tr>
+      <td><strong>覆盖 SDLC 全域</strong><br><span style="color:var(--muted);font-size:13.5px">Potpie 的 Notion/Linear/Jira</span></td>
+      <td>值得借的只是 B2 里那一条最小切口（MR 描述 + 工单号）。
+        全域接入会把工具变成平台，偏离「一个能进 CI 的 CLI」这个形态。</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <p>
+    <strong>一条贯穿性的判断：</strong>这些项目在<em>覆盖面</em>上都比 CodeAtlas 强，
+    而 CodeAtlas 唯一可能领先的是<em>特定场景下的可信度</em>——
+    叙述挂证据、失效可判定、领域按业务划分、咬住老栈脏细节。
+    所有优先级都该照这个方向排：<strong>凡是提升可信度的排前面，凡是扩大覆盖面的排后面。</strong>
+  </p>
+</div>
+
+<!-- ─────────────────────────── F -->
+<h2 id="f"><span class="num">F</span>落地顺序</h2>
+
+<table>
+  <thead>
+    <tr><th>顺序</th><th>事项</th><th>为什么排这个位置</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>1</strong></td>
+      <td>MCP 补四个工具（C2）</td>
+      <td>数据已在库里，纯接线。立刻提升 agent 实际可用性，且是验证指标（B3）的前提。</td>
+    </tr>
+    <tr>
+      <td><strong>2</strong></td>
+      <td>更新触发机制：hook + CI（B1）</td>
+      <td>失效判定已建好却没人触发，是整个「不腐烂」主张的唯一缺环。成本低，收益是结构性的。</td>
+    </tr>
+    <tr>
+      <td><strong>3</strong></td>
+      <td>建议阅读顺序（C1）</td>
+      <td>一次加权排序即可，直接回答接手者的第一个问题。</td>
+    </tr>
+    <tr>
+      <td><strong>4</strong></td>
+      <td>两个自测指标（B3）</td>
+      <td>接 MCP 前后的 token / 工具调用对比。没有它，后续改进无从判断好坏。</td>
+    </tr>
+    <tr>
+      <td><strong>5</strong></td>
+      <td>Mermaid 图（C3）</td>
+      <td>图数据已有，换输出格式而已；但属体验改进，让位于前四项。</td>
+    </tr>
+    <tr>
+      <td><strong>6</strong></td>
+      <td>MR / 工单证据 probe（B2）</td>
+      <td>唯一能突破「证据源覆盖」这层天花板的一项，但牵涉外部系统与合规确认，宜在基础稳固后做。</td>
+    </tr>
+    <tr>
+      <td><strong>7</strong></td>
+      <td>风险地图（C5）、<code>catlas ask</code>（C4）</td>
+      <td>加分项，不解决现有缺陷。</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <p>
+    <strong>与第 09 节优化方向的关系：</strong>那一节的头两项（<em>让缺失与不确定可见</em>、<em>矛盾检测</em>）
+    仍应排在本表之前——它们修的是「文档可能骗你」这个根本问题，
+    而本表大多是「文档还能更好用」。
+    <strong>顺序是：先让它不骗人，再让它自动保鲜，最后让它更好用。</strong>
+  </p>
+</div>
+
+<footer>
+  <p>
+    CodeAtlas（<code>catlas</code>）· 配套文档：
+    <a href="overview.html">overview.html</a>（核心机制与现有缺陷） ·
+    <code>docs/design.md</code> ·
+    <code>docs/roadmap.md</code><br>
+    本文所有「现状」判断均经代码核实；外部项目数据引自其公开仓库与论文，均为各自作者自评结果。
+  </p>
+</footer>
+
+</div>
+</body>
+</html>

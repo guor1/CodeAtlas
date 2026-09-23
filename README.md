@@ -57,6 +57,8 @@ claude mcp add catlas -- catlas mcp --path /path/to/legacy-project
 
 ## 文档
 
+- [docs/overview.html](docs/overview.html) — **它为什么能解决老项目的知识沉淀问题**（核心机制通读版，浏览器打开）
+- [docs/improvements.html](docs/improvements.html) — 对照同类开源项目得出的改进建议与落地顺序
 - [docs/design.md](docs/design.md) — 三层知识模型、SQLite schema、关键设计决策
 - [docs/roadmap.md](docs/roadmap.md) — 实施计划、各阶段状态、已知未做项
 

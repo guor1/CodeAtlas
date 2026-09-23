@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeAtlas —— 存量老项目的知识沉淀机制</title>
+<style>
+  :root {
+    --bg: #fbfbf9;
+    --surface: #ffffff;
+    --border: #e3e2dd;
+    --text: #22221f;
+    --muted: #6b6a64;
+    --accent: #0f6b62;
+    --accent-soft: #e6f2f0;
+    --warn: #8a5a12;
+    --warn-soft: #fbf1df;
+    --code-bg: #f4f4f1;
+    --l0: #2f6f4f;
+    --l1: #2a5d8f;
+    --l2: #7a4a8f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --surface: #1e1e22;
+      --border: #33333a;
+      --text: #e8e8e4;
+      --muted: #a0a099;
+      --accent: #5fbfb2;
+      --accent-soft: #14312e;
+      --warn: #d9ab63;
+      --warn-soft: #2e2618;
+      --code-bg: #26262b;
+      --l0: #6fbf93;
+      --l1: #7aaede;
+      --l2: #bd94d4;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px 120px; }
+
+  header.hero {
+    border-bottom: 1px solid var(--border);
+    padding: 72px 0 48px;
+    margin-bottom: 8px;
+  }
+  .eyebrow {
+    font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin: 0 0 14px;
+  }
+  h1 { font-size: 40px; line-height: 1.25; margin: 0 0 18px; letter-spacing: -.01em; }
+  .lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 62ch; }
+
+  h2 {
+    font-size: 24px; margin: 64px 0 4px; letter-spacing: -.01em;
+    padding-top: 8px;
+  }
+  h2 .num {
+    display: inline-block; min-width: 1.6em;
+    color: var(--accent); font-variant-numeric: tabular-nums;
+  }
+  h3 { font-size: 17px; margin: 32px 0 6px; }
+  h4 { font-size: 15px; margin: 22px 0 4px; color: var(--muted); font-weight: 600; }
+  p { margin: 12px 0; }
+  ul, ol { margin: 12px 0; padding-left: 1.4em; }
+  li { margin: 6px 0; }
+  a { color: var(--accent); }
+  strong { font-weight: 650; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .875em; background: var(--code-bg);
+    padding: .12em .38em; border-radius: 4px;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 18px; overflow-x: auto;
+    font-size: 13.5px; line-height: 1.65; margin: 16px 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  .sub { color: var(--muted); font-size: 15px; margin-top: 2px; }
+
+  /* ── TOC ─────────────────────────── */
+  nav.toc {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 24px; margin: 40px 0 0;
+  }
+  nav.toc p { margin: 0 0 8px; font-size: 12px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  nav.toc ol { margin: 0; padding-left: 1.3em; columns: 2; column-gap: 32px; }
+  nav.toc li { margin: 3px 0; font-size: 14.5px; break-inside: avoid; }
+  nav.toc a { text-decoration: none; color: var(--text); }
+  nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  /* ── cards / callouts ────────────── */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 24px; margin: 20px 0;
+  }
+  .callout {
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    border-radius: 0 8px 8px 0; padding: 14px 20px; margin: 20px 0;
+  }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+
+  /* ── layer stack diagram ─────────── */
+  .stack { margin: 28px 0; }
+  .layer {
+    border: 1px solid var(--border); border-left: 4px solid var(--c);
+    background: var(--surface);
+    border-radius: 0 8px 8px 0; padding: 14px 20px; margin-bottom: 10px;
+  }
+  .layer .tag {
+    display: inline-block; font-size: 12px; font-weight: 700;
+    letter-spacing: .06em; color: var(--c); margin-right: 10px;
+  }
+  .layer .name { font-weight: 650; }
+  .layer .cost {
+    float: right; font-size: 12px; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px; padding: 1px 10px;
+  }
+  .layer .detail { font-size: 14.5px; color: var(--muted); margin: 8px 0 0; }
+  .layer.l0 { --c: var(--l0); }
+  .layer.l1 { --c: var(--l1); }
+  .layer.l2 { --c: var(--l2); }
+  .flowarrow {
+    text-align: center; color: var(--muted); font-size: 13px;
+    margin: -4px 0 6px;
+  }
+
+  /* ── tables ──────────────────────── */
+  table {
+    width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14.5px;
+  }
+  th, td {
+    text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { font-size: 12.5px; letter-spacing: .04em; text-transform: uppercase;
+       color: var(--muted); font-weight: 600; border-bottom-width: 2px; }
+  td:first-child { white-space: nowrap; }
+  @media (max-width: 640px) { td:first-child { white-space: normal; } }
+
+  /* ── metric row ──────────────────── */
+  .metrics {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+    gap: 1px; background: var(--border); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden; margin: 22px 0;
+  }
+  .metric { background: var(--surface); padding: 14px 16px; }
+  .metric .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums;
+               letter-spacing: -.02em; display: block; }
+  .metric .k { font-size: 12.5px; color: var(--muted); }
+
+  /* ── problem → mechanism pairs ───── */
+  .pair {
+    display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px;
+    align-items: center; margin: 14px 0;
+  }
+  .pair .p, .pair .m {
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; font-size: 14.5px; background: var(--surface);
+  }
+  .pair .p { color: var(--muted); }
+  .pair .m { border-color: var(--accent); }
+  .pair .arrow { color: var(--accent); font-size: 18px; }
+  @media (max-width: 640px) {
+    .pair { grid-template-columns: 1fr; gap: 6px; }
+    .pair .arrow { text-align: center; transform: rotate(90deg); }
+  }
+
+  .pill {
+    display: inline-block; font-size: 12px; padding: 1px 9px;
+    border-radius: 999px; border: 1px solid var(--border); color: var(--muted);
+    margin-left: 6px; vertical-align: middle;
+  }
+  .pill.done { color: var(--accent); border-color: var(--accent); }
+
+  /* ── defect cards ────────────────── */
+  .defect {
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); padding: 16px 20px; margin: 14px 0;
+  }
+  .defect > .head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  }
+  .defect .title { font-weight: 650; font-size: 15.5px; }
+  .sev {
+    font-size: 11.5px; font-weight: 700; letter-spacing: .06em;
+    padding: 1px 8px; border-radius: 4px; white-space: nowrap;
+  }
+  .sev.high { background: #f8e3e0; color: #8f2f22; }
+  .sev.mid  { background: var(--warn-soft); color: var(--warn); }
+  .sev.low  { background: var(--accent-soft); color: var(--accent); }
+  @media (prefers-color-scheme: dark) {
+    .sev.high { background: #3a211d; color: #e59a8c; }
+  }
+  .defect .why { margin: 8px 0 0; font-size: 14.5px; }
+  .defect .fix {
+    margin: 10px 0 0; padding-top: 10px; border-top: 1px dashed var(--border);
+    font-size: 14.5px;
+  }
+  .defect .fix b { color: var(--accent); font-weight: 650; }
+
+  footer {
+    margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 14px;
+  }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 48px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <p class="eyebrow">CodeAtlas · catlas</p>
+  <h1>给没有文档的老项目，<br>造一份能自我维持的业务知识库</h1>
+  <p class="lede">
+    多年历史、几十个模块、几十万行代码、技术栈老旧、零文档——本文讲清楚
+    CodeAtlas 用什么机制把这类项目的业务知识沉淀下来，为什么这套机制成立，
+    以及为此实际做了哪些工程。
+  </p>
+</header>
+
+<nav class="toc">
+  <p>目录</p>
+  <ol>
+    <li><a href="#p1">问题：知识沉淀为什么一直失败</a></li>
+    <li><a href="#p2">核心洞察：可靠知识藏在哪</a></li>
+    <li><a href="#p3">核心机制：三层知识模型</a></li>
+    <li><a href="#p4">让叙述可信的三个装置</a></li>
+    <li><a href="#p5">关键难点与解法</a></li>
+    <li><a href="#p6">为什么这能解决问题</a></li>
+    <li><a href="#p7">为此做了哪些事</a></li>
+    <li><a href="#p8">实测与边界</a></li>
+    <li><a href="#p9">现有机制的缺点与优化方向</a></li>
+    <li><a href="#p10">同类开源项目对比</a></li>
+  </ol>
+</nav>
+
+<!-- ───────────────────────────────── 1 -->
+<h2 id="p1"><span class="num">01</span>问题：知识沉淀为什么一直失败</h2>
+<p class="sub">不是没人想写文档，是既有的三条路都走不通。</p>
+
+<p>
+一个跑了很多年的业务系统，真正的业务规则散在几十万行代码、几百张表、
+上千次提交里。接手的人——不论是新同事还是 AI——面对的都是同一件事：
+<strong>没有任何一份材料告诉你「这个系统在做什么业务」</strong>。
+常见的三种补救，各自在不同的地方断掉：
+</p>
+
+<table>
+  <thead><tr><th>做法</th><th>为什么在老项目上失效</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>人工补文档</strong></td>
+      <td>成本按人月计；写完当天就开始腐烂——没有任何机制让它跟着代码变。半年后没人敢信它。</td>
+    </tr>
+    <tr>
+      <td><strong>自动生成调用图 / 类图</strong></td>
+      <td>产出的是<em>结构</em>不是<em>业务</em>。「A 调 B 调 C」回答不了「这条链路在处理什么业务、有什么坑」。而且老项目一律面向接口编程，纯语法调用图会死在接口边界。</td>
+    </tr>
+    <tr>
+      <td><strong>把代码丢进向量库做 RAG</strong></td>
+      <td>检索出的片段无结构、无边界，模型只能顺着片段编。没有证据锚点，<strong>幻觉不可检测</strong>；代码一改，索引整体失效，也说不清哪条结论该作废。</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <p>
+    <strong>三条路的共同病根是同一个：</strong>把「事实」和「叙述」混在一起。
+    人工文档全是叙述、没有事实锚点；调用图全是事实、没有叙述；RAG 则是拿事实碎片
+    现场编叙述，二者的坏处都占了。
+  </p>
+</div>
+
+<!-- ───────────────────────────────── 2 -->
+<h2 id="p2"><span class="num">02</span>核心洞察：可靠知识藏在哪</h2>
+<p class="sub">在老项目上做了实证，然后把整个工具建在这个结论上。</p>
+
+<p>
+老项目里最可靠的业务知识<strong>不在代码结构里</strong>。代码结构反映的是当年的技术选型，
+经过多轮重构和人员更替，早已不对应业务划分。真正稳定的业务信息集中在三处：
+</p>
+
+<div class="card">
+  <h4>① 中文注释，尤其是枚举与常量类</h4>
+  <p style="margin-top:4px">
+    <code>PromotionTypeEnum.TEJIA("特价活动")</code> 这样的一行，同时给出了
+    <em>业务术语</em>、<em>代码标识符</em>、<em>取值枚举</em>三重信息。这是老项目里信息密度最高的地方——
+    因为写它的人是为了自己以后看懂，而不是为了交差。
+  </p>
+  <h4>② 表结构与表访问</h4>
+  <p style="margin-top:4px">
+    数据模型比代码稳定得多：字段名、字段注释、哪个 DAO 读写哪张表，
+    刻画的是业务实体本身。目标项目往往连 DDL 都没有，但 MyBatis 的
+    <code>resultMap</code> 能把表和字段完整反推出来。
+  </p>
+  <h4>③ git 历史</h4>
+  <p style="margin-top:4px">
+    提交信息里是<em>当时的业务语境</em>（「新增砍价活动」「修复优惠券叠加」），
+    分支名是业务词表，而「哪些文件总是一起改」是比包结构更真实的业务边界信号。
+  </p>
+</div>
+
+<p>
+这三处有一个共同性质：<strong>都能被确定性地抽取</strong>——不花 token、可复现、
+同样的输入永远得到同样的输出。这个性质是后面所有机制的地基。
+</p>
+
+<!-- ───────────────────────────────── 3 -->
+<h2 id="p3"><span class="num">03</span>核心机制：三层知识模型</h2>
+<p class="sub">把「事实」和「叙述」严格分层，叙述必须挂证据。</p>
+
+<p>
+整个工具的骨架就是下面这个分层。每一层只消费下一层的产出，
+成本、可靠性、失效方式都不同：
+</p>
+
+<div class="stack">
+  <div class="layer l0">
+    <span class="cost">零 token · 秒级 · 完全可复现</span>
+    <span class="tag">L0</span><span class="name">证据层 —— 确定性抽取</span>
+    <p class="detail">
+      从源码、配置、git 里扒出不会出错的事实：Maven 模块树；
+      tree-sitter 解析出的类/方法/字段/枚举成员（含 Javadoc 原文与行号）；
+      mapper XML 反推的表与字段；哪个 DAO 读写哪张表；
+      Dubbo 接口 / HTTP 路由 / XXL-Job 任务 / MQ 消费者这四类入口清单；
+      带置信度的调用边；每文件的 churn、触碰它的提交 subject、分支词表。
+    </p>
+  </div>
+  <p class="flowarrow">↓ 纯计算推导，不引入新信息</p>
+  <div class="layer l1">
+    <span class="cost">零 token · 纯计算</span>
+    <span class="tag">L1</span><span class="name">结构层 —— 确定性推导</span>
+    <p class="detail">
+      <strong>领域划分</strong>：包路径、表名前缀、git 共变、调用关系四路信号加权投票，
+      迭代传播到不动点，把几十万行代码切成若干业务领域。<br>
+      <strong>能力链路 trace</strong>：从每个入口沿调用边 BFS 下探，
+      到触表的符号终止——得到「这个接口最终动了哪些表」的完整链路。
+    </p>
+  </div>
+  <p class="flowarrow">↓ 证据打包 → 大模型只做「解读」，不做「检索」</p>
+  <div class="layer l2">
+    <span class="cost">按需花 token · 逐条挂证据</span>
+    <span class="tag">L2</span><span class="name">叙述层 —— LLM 生成</span>
+    <p class="detail">
+      <strong>术语表</strong>：中文业务术语 ↔ 定义 / 别名 / 代码标识符。<br>
+      <strong>领域档案</strong>：职责、核心概念、生命周期与状态机、业务规则、⚠️ 已知陷阱、待确认问题。<br>
+      <strong>能力叙述</strong>：单个入口的调用者视角——入参含义、执行过程、副作用、约束、易踩的坑。
+    </p>
+  </div>
+</div>
+
+<div class="callout">
+  <p>
+    <strong>这个分层直接换来三个性质：</strong>
+    L0/L1 免费且可复现，所以<em>全量骨架可以零成本先铺满</em>；
+    L2 的每一条都挂着 L0 的证据，所以<em>可追溯、可审计</em>；
+    证据变了就知道哪一条该重算，所以<em>可增量演进</em>。
+  </p>
+</div>
+
+<h3>两段式：先铺满，再深挖</h3>
+<p>
+因为 L0/L1 不花钱，工具的使用方式是两段式的：
+<code>catlas init</code> 先在几十秒内把全项目骨架铺满——模块、符号、表、入口、领域、链路全都有了，
+一个 token 都没花；之后再按需对某个领域或某个入口花 token 深挖业务语义。
+<strong>贵的部分永远是可选的、按需的、可估算的</strong>（<code>--dry-run</code> 先报预估 token）。
+</p>
+
+<!-- ───────────────────────────────── 4 -->
+<h2 id="p4"><span class="num">04</span>让叙述可信的三个装置</h2>
+<p class="sub">LLM 写的东西默认不可信——所以给它套上三重约束。</p>
+
+<h3>① 证据包 + 硬约束 prompt：让模型只能解读，不能检索</h3>
+<p>
+模型拿到的不是「一堆代码片段」，而是 L0/L1 组织好的结构化证据包，
+按信息密度排序裁剪到预算内：<em>枚举注释 &gt; 表结构 &gt; 入口 &gt; 链路 &gt; 提交信息 &gt; 源码节选</em>。
+跨领域共享的类型（比如一个被到处引用的 <code>PromotionTypeEnum</code>）会被显式标注，避免误归到某个领域。
+system prompt 里是硬约束：<strong>只依据给定证据</strong>、<strong>不确定必须写 UNKNOWN</strong>、
+<strong>区分「代码行为」与「业务意图」</strong>、只输出 JSON。
+</p>
+
+<h3>② source_digest：证据变了，结论自动失效</h3>
+<p>
+每条 L2 记录强制持有一个 <code>source_digest</code>——它所依据的那批证据的摘要——外加一个
+<code>status</code>。重建时重算 digest：不变则这条结论仍然新鲜，跳过；
+变了则标记为过期待重算；依据的领域整个消失了，则标记为 <code>stale</code> 而不是错误地继续渲染。
+<strong>这是「文档不腐烂」的机制保证</strong>：陈旧的结论不会沉默地留在文档里冒充有效。
+</p>
+
+<h3>③ 稳定键 relink：重建数据库不丢已有结论</h3>
+<p>
+全量重建会让所有行的 id 重新分配。如果 L2 笔记按 id 挂载，一次重建就全成孤儿。
+所以笔记挂的是<strong>稳定的业务键</strong>（<code>domain_key</code> / <code>subject_key</code>），
+重建后按键重新链接。已验证的三条路径：重建后笔记存活并正确重链；
+新领域插入导致 id 漂移（coupon 从 1 变 2）后笔记跟着重链；
+领域被人工排除后其笔记转为 <code>stale</code>。
+</p>
+
+<h3>存储：SQLite 是唯一真相，Markdown 只是视图</h3>
+<p>
+所有事实与结论都在 <code>.codeatlas/codeatlas.db</code> 里，程序可查询、可增量更新；
+<code>.knowledge/</code> 下的 Markdown 是 <code>render</code> 派生出来的视图，<strong>可以随时删掉重建</strong>。
+这样人读 Markdown、程序查 SQLite、agent 走 MCP，三方消费同一份真相，不会各自漂移。
+项目的 <code>CLAUDE.md</code> 只被写入一个带标记的托管块，块外的手写内容一律不动。
+</p>
+
+<!-- ───────────────────────────────── 5 -->
+<h2 id="p5"><span class="num">05</span>关键难点与解法</h2>
+<p class="sub">在真实老项目（12 模块 / 23 万行 / 5003 commit / 零文档）上撞出来的问题。</p>
+
+<h3>包结构不是业务边界 → 四路信号加权投票</h3>
+<p>
+老项目的包结构早被重构揉烂了，不能直接当领域。所以领域划分用四路信号投票：
+<strong>包路径（权重 3）、表名前缀（2）、git 共变（1）、调用关系（1）</strong>，
+迭代传播到不动点。配套两个必要的修正：
+</p>
+<ul>
+  <li><strong>同义拼写折叠</strong>：<code>groupBuying</code> / <code>groupbuying</code> / <code>group_buy</code> 是同一个领域，不折叠就碎成三个。</li>
+  <li><strong>命名空间自动识别</strong>：<code>com/company/product</code> 这样在同一路径深度出现率 ≥90% 的段是命名空间，不是领域——按出现率识别，而不是硬编码公司名。</li>
+</ul>
+<p>划分结果可以被 <code>.codeatlas/domains.toml</code> 人工覆盖，人工优先级最高。</p>
+
+<h3>调用图死在接口边界 → 补 override 边</h3>
+<p>
+老项目一律「经接口调服务」。纯语法调用图走到接口方法就断了，
+根本到不了实现类、更到不了数据表。补上「接口方法 → 实现方法」的 override 边之后，
+在实测项目上<strong>可用链路从 4 条变成 455 条</strong>——这是从「不可用」到「可用」的差别。
+调用边解析不了的情况不丢弃，降级存原始文本并标低置信度（1.0 / 0.6 / 0.3 三档）。
+</p>
+
+<h3>朴素表名提取会凭空造表 → 特判 SQL 陷阱</h3>
+<p>
+MySQL 的 <code>ON DUPLICATE KEY UPDATE col</code> 会骗过朴素的表名提取器，
+让 <code>col</code> 被当成一张表。这类特判必须做，否则知识库里会混进不存在的表——
+<strong>一个凭空造出来的事实，比缺失的事实伤害更大</strong>。
+</p>
+
+<h3>中文检索：trigram 分词</h3>
+<p>
+SQLite FTS5 默认的 <code>unicode61</code> 按空格分词，对中文完全失效。
+改用 <strong>trigram</strong> 分词后中英文都按子串匹配。代价是 ≤2 字符的查询不命中（比如「特价」两个字），
+所以短查询自动回退到 <code>LIKE</code> 子串扫描——只在短查询时触发，代价可控。
+</p>
+
+<h3>增量同步：为什么不看 git 提交记录</h3>
+<p>
+<code>catlas sync</code> 判断「哪些文件变了」用的是每个文件内容的 SHA-256，而不是 <code>git log</code>。
+这是个反直觉但必要的选择：
+</p>
+<ol>
+  <li><strong>git 看不见未提交的改动。</strong>开发最频繁的循环是「改一行 → 跑一次看效果」，而 <code>git log</code> 只反映已提交状态，恰好漏掉这个循环。</li>
+  <li><strong>git 记录的是「哪个 commit 碰了哪些文件」，不是「磁盘字节与上次索引时是否不同」。</strong>文件被 revert 回原样、rebase 重写了对象、换台机器重新 clone——commit sha 都指不到「上次解析的那个字节状态」。</li>
+  <li><strong>代价不对称。</strong><code>git log</code> 全量走历史是整个构建里最慢的一步；而对几千个文件做 sha256 单线程都不到一秒。</li>
+</ol>
+<p>
+而 sync 真正的难点根本不在「找变更文件」，在于 <strong>L1/L2 是全局聚合</strong>：
+调用边解析需要全项目符号表、领域投票需要全局信号、trace BFS 和检索索引都无法按文件增量。
+所以解法是<strong>复用整条构建流水线，只跳过 tree-sitter 解析这一步</strong>——
+未变更文件的解析结果按内容哈希缓存，命中即复用，
+<strong>产出与全量构建逐字节一致</strong>。工具版本升级（语法树或 schema 变了）时丢弃缓存全量重算。
+git 历史信号则做了三级缓存：HEAD 没动直接复用，HEAD 前移走 <code>old..new</code> 增量折叠，
+rebase/force-push 后回退到全量 walk——增量结果与全量 walk 实测逐字节一致。
+</p>
+
+<!-- ───────────────────────────────── 6 -->
+<h2 id="p6"><span class="num">06</span>为什么这能解决问题</h2>
+<p class="sub">把第 01 节的每个病根，对回具体机制。</p>
+
+<div class="pair">
+  <div class="p">写文档成本按人月计，没人愿意做</div>
+  <div class="arrow">→</div>
+  <div class="m"><strong>L0/L1 零 token 全自动</strong>：几十秒铺满全项目骨架，昂贵的 L2 深挖是可选、按需、可先估价的</div>
+</div>
+<div class="pair">
+  <div class="p">文档写完就开始腐烂，半年后没人敢信</div>
+  <div class="arrow">→</div>
+  <div class="m"><strong>source_digest 失效 + sync 增量</strong>：证据一变，依赖它的结论自动标记过期；陈旧结论不会冒充有效</div>
+</div>
+<div class="pair">
+  <div class="p">调用图只有结构，答不了业务问题</div>
+  <div class="arrow">→</div>
+  <div class="m"><strong>领域划分 + 入口→表链路</strong>：先把代码切成业务领域，再给每条链路配业务叙述</div>
+</div>
+<div class="pair">
+  <div class="p">RAG 幻觉不可检测</div>
+  <div class="arrow">→</div>
+  <div class="m"><strong>叙述必须挂证据</strong>：模型只在结构化证据包上解读，不确定必须写 UNKNOWN，每条结论可回溯到文件行号</div>
+</div>
+<div class="pair">
+  <div class="p">重建一次，已有结论全丢</div>
+  <div class="arrow">→</div>
+  <div class="m"><strong>稳定业务键 relink</strong>：笔记挂业务键而非行 id，跨重建存活，id 漂移后自动重链</div>
+</div>
+<div class="pair">
+  <div class="p">人读的文档和程序用的数据各自漂移</div>
+  <div class="arrow">→</div>
+  <div class="m"><strong>SQLite 唯一真相 + Markdown 派生视图 + MCP 只读工具</strong>：三方消费同一份数据</div>
+</div>
+
+<h3>还有一条：让 AI 直接用</h3>
+<p>
+知识库不只给人看。<code>catlas mcp</code> 以 MCP server（stdio JSON-RPC）方式运行，
+向 Claude Code 暴露三个只读工具——<code>search</code>（全文检索）、<code>domains</code>（领域清单）、
+<code>status</code>（各层统计）。注册一行即可：
+</p>
+<pre><code>claude mcp add catlas -- catlas mcp --path /path/to/legacy-project</code></pre>
+<p>
+于是 AI 接手老项目时，不再是「在几十万行里硬啃」，
+而是先问知识库「这个项目有哪些业务领域」「『砍价』相关的代码和表在哪」，
+拿到带证据的结构化答案再动手。
+</p>
+
+<!-- ───────────────────────────────── 7 -->
+<h2 id="p7"><span class="num">07</span>为此做了哪些事</h2>
+<p class="sub">四个阶段，全部实现并验证。</p>
+
+<h3>阶段 A —— 骨架与 L0 证据层 <span class="pill done">已完成</span></h3>
+<ul>
+  <li>SQLite schema 与迁移；所有表带 <code>project_id</code>（为跨项目融合预留）</li>
+  <li>Maven POM 模块树</li>
+  <li>Java 符号抽取（tree-sitter，rayon 并行）：类/接口/枚举/枚举成员/方法/字段/常量 + Javadoc + 注解</li>
+  <li>MyBatis mapper XML → 表/字段/表访问（含 <code>@TableName</code>、<code>ON DUPLICATE KEY UPDATE</code> 特判）</li>
+  <li>Dubbo XML → 服务入口；Spring XML → MQ 消费者；<code>@XxlJob</code> → 定时任务；Spring MVC 注解 → HTTP 路由</li>
+  <li>调用边解析（import + 字段类型启发式，带 confidence，解析失败降级存原文）</li>
+  <li>git 历史信号：churn、提交 subject、分支词表</li>
+</ul>
+
+<h3>阶段 B —— L1 结构层 <span class="pill done">已完成</span></h3>
+<ul>
+  <li>领域划分：四路信号加权投票 + 变体折叠 + 命名空间识别 + <code>domains.toml</code> 人工覆盖</li>
+  <li>入口→数据表链路 trace：BFS（深度 ≤6），含接口→实现的 override 动态分发边</li>
+  <li>Markdown 渲染：README / 领域档案 / 术语表 / 参考清单（tables、entrypoints、jobs、mq）+ <code>CLAUDE.md</code> 托管块</li>
+</ul>
+
+<h3>阶段 C —— L2 叙述层 <span class="pill done">已完成</span></h3>
+<ul>
+  <li>LLM client：直连 Messages API（复用 <code>$ANTHROPIC_BASE_URL</code> / <code>$ANTHROPIC_AUTH_TOKEN</code>），凭证文件隔离</li>
+  <li>证据包按预算裁剪，跨领域共享类型显式标注</li>
+  <li>领域档案 + 术语表生成，含解析失败重试与截断检测</li>
+  <li>prompt 级缓存：按 prompt+model+max_tokens 哈希命中，<strong>只缓存解析成功的响应</strong>（坏响应不固化）</li>
+  <li><code>capability</code>：单入口能力叙述，渲染进入口参考页</li>
+</ul>
+
+<h3>阶段 D —— 增量与 agent 接入 <span class="pill done">已完成</span></h3>
+<ul>
+  <li>L2 结论跨重建存活：稳定键 + relink，三条路径端到端验证</li>
+  <li>按 digest 失效，<code>--only-stale</code> 跳过仍新鲜的结论</li>
+  <li><code>catlas query</code>：FTS5 全文检索，trigram 分词，短查询 LIKE 回退，支持 <code>--json</code></li>
+  <li><code>catlas sync</code>：sha256 变更检测 + 解析缓存复用 + git 信号三级缓存</li>
+  <li><code>catlas mcp</code>：stdio JSON-RPC MCP server，三个只读工具</li>
+</ul>
+
+<h3>可复用性：probe 架构</h3>
+<p>
+抽取引擎是一组可插拔的 probe（<code>detect</code> 判定适用性 + <code>extract</code> 抽取），
+当前实现 maven / java / mybatis-xml / spring-xml / dubbo-xml / properties / git。
+换一种技术栈的老项目（Spring Boot 注解式、MyBatis 注解式，乃至其它语言）
+只需新增一个 probe，核心流水线与 schema 不动。
+</p>
+
+<!-- ───────────────────────────────── 8 -->
+<h2 id="p8"><span class="num">08</span>实测与边界</h2>
+
+<h3>实测数据</h3>
+<p class="sub"><code>yaoex-promotion</code>：12 模块 / 23 万行 Java / 5003 commit / 零文档。全量构建 <strong>20 秒</strong>，零 token。</p>
+<div class="metrics">
+  <div class="metric"><span class="v">12</span><span class="k">模块</span></div>
+  <div class="metric"><span class="v">1714</span><span class="k">文件</span></div>
+  <div class="metric"><span class="v">22394</span><span class="k">符号</span></div>
+  <div class="metric"><span class="v">47807</span><span class="k">调用边</span></div>
+  <div class="metric"><span class="v">140</span><span class="k">数据表</span></div>
+  <div class="metric"><span class="v">1434</span><span class="k">字段</span></div>
+  <div class="metric"><span class="v">506</span><span class="k">入口</span></div>
+  <div class="metric"><span class="v">43</span><span class="k">领域</span></div>
+  <div class="metric"><span class="v">455</span><span class="k">链路</span></div>
+</div>
+
+<h4>质量抽查</h4>
+<p>
+对 <code>defective</code>（瑕疵品）领域跑深挖，产出的领域解读准确扒出了：
+「捡漏专区」这一业务别名、活动时间交叉互斥的业务规则、
+以及 <code>batchUpdateSortNum</code> 这个方法的注释自曝其实无用——
+<strong>最后一条是典型的「只有读了注释才知道」的知识</strong>，正是这类知识最容易随人员流动丢失。
+</p>
+
+<h4>工程验证</h4>
+<ul>
+  <li>127 个单测全绿（含 java/xml/properties/git/领域划分/prompt 解析/query/sync/mcp 的 fixtures）</li>
+  <li>sync 的 git 增量摄取结果与全量 walk 逐字节一致（实测比对）</li>
+  <li>L2 跨重建存活三场景全过（存活重链 / id 漂移重链 / 领域消失转 stale）</li>
+  <li>MCP 以管道喂 JSON-RPC 端到端验证，三个工具均返回合法结果</li>
+</ul>
+
+<h3>明确的边界</h3>
+<div class="callout warn">
+  <p>诚实标注未做的部分，比假装完备更有用：</p>
+  <ul style="margin-bottom:0">
+    <li><strong>跨项目知识融合</strong>：schema 已预埋 <code>project_id</code>，但未实现</li>
+    <li><strong>JSP / JS 前端链路</strong>：不解析</li>
+    <li><strong>非 Java 项目</strong>：probe 架构支持扩展，但目前只实现了 Java 栈</li>
+    <li><strong>配置中心持有的 MQ topic 等外部配置</strong>：无法从仓库反推，渲染时以 <code>${占位符}</code> 原样标注，不猜</li>
+    <li><strong>增量同步只缓存 Java 解析</strong>：XML / properties 每次全量重扫（它们便宜）；git 历史信号是 sync 后剩余的主要耗时</li>
+  </ul>
+</div>
+
+<!-- ───────────────────────────────── 9 -->
+<h2 id="p9"><span class="num">09</span>现有机制的缺点与优化方向</h2>
+<p class="sub">上面讲的是机制成立的地方，这节讲机制本身的代价——按影响面排序。</p>
+
+<div class="callout warn">
+  <p>
+    第 08 节的「边界」列的是<em>还没做的功能</em>；这一节列的是<strong>已做部分本身的缺陷</strong>——
+    即使功能都做了，下面这些问题依然存在，因为它们来自设计权衡而不是工作量。
+  </p>
+</div>
+
+<h3>一、L0 的准确性天花板：启发式调用解析</h3>
+
+<div class="defect">
+  <div class="head">
+    <span class="sev high">影响大</span>
+    <span class="title">调用边靠启发式而非真正的类型推导，链路会静默缺失</span>
+  </div>
+  <p class="why">
+    调用边的置信度是启发式打出来的：接收者是已知声明类型的字段且该类型声明了此方法 → <code>1.0</code>；
+    类型已知但方法不在其上（继承来的）→ <code>0.6</code>；只知道方法名、且全项目恰有一个类型声明它 → <code>0.3</code>。
+    而 trace 构建时会<strong>丢掉 <code>0.6</code> 以下的边</strong>。这意味着三类调用会静默消失：
+    局部变量接收者、泛型/容器里取出的对象、以及反射与 Spring 动态代理。
+    实测 506 个入口只产出 455 条链路，缺口正来自这里——<strong>而且缺失是静默的</strong>，
+    文档不会告诉你「这个入口的链路没扒全」。
+  </p>
+  <p class="fix">
+    <b>优化方向：</b>①把「入口无链路 / 链路 <code>min_confidence</code> 低」显式渲染成警示，
+    让缺失从静默变可见，这是成本最低、收益最直接的一步；
+    ②做方法体内的局部变量类型绑定（tree-sitter 已有 AST，属增量工作）；
+    ③把 <code>0.3</code> 的弱边单独成一类「疑似链路」呈现而不是丢弃。
+  </p>
+</div>
+
+<div class="defect">
+  <div class="head">
+    <span class="sev mid">影响中</span>
+    <span class="title">trace 的 <code>MAX_DEPTH=6</code> 与每入口 24 条路径是硬上限</span>
+  </div>
+  <p class="why">
+    老项目里「Controller → Service → Manager → 另一个 Service → DAO」这种层层转发很常见，
+    六层不一定够；超限即截断，同样没有标记。每入口 24 条路径的上限在扇出大的入口上会丢掉真实分支。
+  </p>
+  <p class="fix">
+    <b>优化方向：</b>触达上限时打标记（<code>truncated</code>），并允许按项目配置上限——
+    比给一个更大的固定值更稳。
+  </p>
+</div>
+
+<h3>二、L1 的可解释性缺口：领域划分是个黑箱</h3>
+
+<div class="defect">
+  <div class="head">
+    <span class="sev high">影响大</span>
+    <span class="title">四路投票的权重 3/2/1/1 是拍出来的，且划分结果不可解释</span>
+  </div>
+  <p class="why">
+    权重没有经过调参或交叉验证，是在一个项目上试出来的经验值；换一个包结构风格不同的项目
+    （比如按技术分层而非按业务分包）不保证还合适。更麻烦的是<strong>结果不可解释</strong>：
+    实测切出 43 个领域，但工具说不出「<code>XxxService</code> 为什么被归到 A 而不是 B」、
+    也不给置信度。用户只能全盘接受或手写 <code>domains.toml</code> 全盘覆盖，中间没有台阶。
+    43 个领域对 12 个模块的项目而言也偏碎——很可能有该合并的。
+  </p>
+  <p class="fix">
+    <b>优化方向：</b>①落一张投票明细表（每个符号各路信号的得票与最终归属），
+    渲染时输出「归属理由 + 次优候选」，让人能针对性地只覆盖有疑问的那几个；
+    ②给领域本身打内聚度分数，低分的标注「建议人工确认」；
+    ③把权重提到配置里，并在多个项目上做一次对照，用<em>数据</em>而不是直觉定默认值。
+  </p>
+</div>
+
+<h3>三、L2 的根本局限：只能解读已存在的痕迹</h3>
+
+<div class="defect">
+  <div class="head">
+    <span class="sev high">影响大</span>
+    <span class="title">证据里没有的业务知识，机制上永远补不出来</span>
+  </div>
+  <p class="why">
+    整套设计的基石是「叙述必须挂证据」——这挡住了幻觉，但同时划定了能力上限：
+    <strong>注释写错了会被如实当成事实沉淀</strong>（老项目里注释与代码不一致极常见，
+    而工具无法判断哪个才对）；
+    从未写进注释、也没在 commit 里留痕的业务规则（口头约定、只在需求文档或某人脑子里的东西）
+    根本无从抽取。所以它是<em>把散落的知识聚拢</em>，不是<em>创造缺失的知识</em>。
+  </p>
+  <p class="fix">
+    <b>优化方向：</b>①主动做<strong>矛盾检测</strong>——注释与代码行为不符、
+    枚举注释与实际取值不符时，产出「待确认冲突」清单，让工具从「沉淀者」升级为「提问者」，
+    这恰恰是最有价值的产出；②支持人工补充的知识条目与抽取结果同层存放并标注来源，
+    让口头知识有个能落下来的地方。
+  </p>
+</div>
+
+<div class="defect">
+  <div class="head">
+    <span class="sev mid">影响中</span>
+    <span class="title">证据包按字符数截断，重要证据可能被挤掉</span>
+  </div>
+  <p class="why">
+    证据裁剪是「按固定优先级、各段填到字符预算为止」。同一段内部的取舍是顺序决定的，
+    没有重要性排序——一张核心业务表可能因为排在后面而被截断掉，
+    而前面填进去的可能是无关紧要的枚举。大领域尤其吃亏。
+  </p>
+  <p class="fix">
+    <b>优化方向：</b>段内按信号强度排序（churn 高、被引用多、在链路上的优先），
+    并把预算单位从字符改成 token；对超大领域改为分批深挖后合并，而不是硬截断。
+  </p>
+</div>
+
+<div class="defect">
+  <div class="head">
+    <span class="sev mid">影响中</span>
+    <span class="title">L2 质量只有人工抽查，没有回归基线</span>
+  </div>
+  <p class="why">
+    127 个单测覆盖的是确定性部分（抽取、解析、缓存、检索、MCP）；
+    L2 的质量目前靠人工抽查一个领域。这意味着<strong>换模型、改 prompt、调证据包之后，
+    没有任何自动手段能判断质量是升了还是降了</strong>。
+  </p>
+  <p class="fix">
+    <b>优化方向：</b>建一套小规模「黄金集」——人工确认过的若干领域结论，
+    作为 prompt/模型变更的回归基线；再加机械校验：叙述里提到的表名、枚举值、标识符
+    必须都能在 L0 里查到，查不到就是幻觉，可自动判定。
+  </p>
+</div>
+
+<h3>四、增量机制的残留成本</h3>
+
+<div class="defect">
+  <div class="head">
+    <span class="sev mid">影响中</span>
+    <span class="title">sync 只免掉了 tree-sitter，全局聚合每次都要重算</span>
+  </div>
+  <p class="why">
+    改一个文件，调用边解析、领域投票、trace BFS、检索索引重建依然全量跑一遍。
+    在实测规模（1714 文件）上全量才 20 秒，所以现在不痛；
+    但这是<strong>与项目规模线性相关的固定成本</strong>，换到十倍大的库就会变成体验问题。
+    检索索引每次整体 wipe+refill 也属于同类浪费。
+  </p>
+  <p class="fix">
+    <b>优化方向：</b>先按规模决定值不值得做——若要做，
+    检索索引改按变更文件增量更新（最容易切出来）；
+    领域投票在信号未变的子图上复用上轮结果；trace 只重算受影响入口的可达子图。
+  </p>
+</div>
+
+<div class="defect">
+  <div class="head">
+    <span class="sev low">影响小</span>
+    <span class="title">git 信号仍是 sync 后的主要耗时，且 subject 只取最近 4000 条</span>
+  </div>
+  <p class="why">
+    三级缓存已经把常见路径（HEAD 未动 / HEAD 前移）优化掉了，
+    但 rebase、force-push、换机器新 clone 之后要回退全量 walk（十年老库要几分钟）。
+    另外提交 subject 限 4000 条——<strong>早期提交里的业务语境会被丢掉</strong>，
+    而老项目最初的设计意图往往恰好在那些最早的提交里。
+  </p>
+  <p class="fix">
+    <b>优化方向：</b>把 git 信号按 commit sha 持久化成可累积的物化视图
+    （commit 是不可变对象，天然适合永久缓存），使全量 walk 一个项目只需付一次；
+    这样 4000 条上限也能一并放开。
+  </p>
+</div>
+
+<h3>五、适用范围与工程面</h3>
+
+<div class="defect">
+  <div class="head">
+    <span class="sev mid">影响中</span>
+    <span class="title">probe 架构的可扩展性尚未被第二种栈证伪</span>
+  </div>
+  <p class="why">
+    「换个栈只需加一个 probe」目前是<em>设计意图</em>，不是<em>已验证事实</em>——
+    七个 probe 全部服务于同一条 Java/Maven/MyBatis/Dubbo 技术栈。
+    真正接入 Spring Boot 注解式或非 Java 项目时，很可能发现抽象边界划错了地方
+    （比如「表」这个概念对无 ORM 的项目就不适用）。
+  </p>
+  <p class="fix">
+    <b>优化方向：</b>拿一个技术栈差异明显的项目做一次真实接入，
+    用它来校准抽象——这比继续在同一条栈上加功能更能提升工具的通用性。
+  </p>
+</div>
+
+<div class="defect">
+  <div class="head">
+    <span class="sev low">影响小</span>
+    <span class="title">MCP 只暴露三个粗粒度工具</span>
+  </div>
+  <p class="why">
+    <code>search</code> / <code>domains</code> / <code>status</code> 能回答「有哪些领域」「关键词在哪」，
+    但答不了 AI 实际最常问的那类问题：「这个接口最终动了哪些表」
+    「这张表被哪些入口写」——而这些答案<strong>数据库里已经有了</strong>，只是没接出去。
+    深挖出的领域档案与能力叙述也还没有对应工具。
+  </p>
+  <p class="fix">
+    <b>优化方向：</b>补 <code>trace</code>（入口→表链路）、<code>table_usage</code>（表→写入方）、
+    <code>capability</code>（入口能力叙述）三个工具。纯接线工作，无新机制。
+  </p>
+</div>
+
+<h3>优化方向的优先级判断</h3>
+<p>
+如果只做三件事，按「收益 ÷ 成本」排序应该是：
+</p>
+<ol>
+  <li><strong>让缺失与不确定可见</strong>——链路缺失/截断打标记、领域归属给理由与置信度。
+    不增加任何抽取能力，但把工具从「可能骗你」变成「会告诉你哪里不可靠」，这是知识库可信度的分水岭。</li>
+  <li><strong>矛盾检测</strong>——注释与代码不符、叙述引用了 L0 里不存在的标识符，
+    都自动列为待确认。前者是老项目最高价值的产出，后者是幻觉的机械判据。</li>
+  <li><strong>补齐 MCP 工具面</strong>——数据已在库里，接线成本最低，直接提升 AI 接手的实际效率。</li>
+</ol>
+<p>
+而「扩展增量粒度」「支持更多语言」这类看起来更像正事的工作，
+在当前规模（20 秒全量）和当前目标（公司内部 Java 老项目）下，
+<strong>优先级明显更低</strong>——先解决可信度，再解决覆盖面。
+</p>
+
+<!-- ───────────────────────────────── 10 -->
+<h2 id="p10"><span class="num">10</span>同类开源项目对比</h2>
+<p class="sub">这个方向已经很热闹，但侧重点不同——看清差异有助于判断该自研还是该借。</p>
+
+<h3>按成熟度分五类</h3>
+<p>
+这个方向的东西很多，但成熟度差得极远——从 1k star 的可安装工具到只有 4 次提交的研究原型都有。
+先按<strong>能不能真的拿来用</strong>分类，再谈思路差异：
+</p>
+
+<h4>第一类：仓库 Wiki 生成器（面向人阅读）</h4>
+<p>
+代表是 <a href="https://github.com/AsyncFuncAI/deepwiki-open">deepwiki-open</a>（Cognition 的
+DeepWiki 的开源实现，把任意 GitHub/GitLab 仓库变成可交互的多语言 Wiki，带 AI 检索与图表）、
+<a href="https://github.com/AIDotNet/OpenDeepWiki">OpenDeepWiki</a>（C#/TypeScript，
+带 Web 界面、思维导图、翻译队列，并暴露 MCP 端点）、
+<a href="https://github.com/he-yufeng/RepoWiki">RepoWiki</a>（CLI/浏览器双入口，
+Mermaid 架构图，PageRank 排出「从哪读起」的路径，靠 <code>.repowiki-state.json</code> 做增量重跑）、
+以及更早的 <a href="https://github.com/context-labs/autodoc">autodoc</a>
+（深度优先遍历仓库，逐文件逐目录让 LLM 写文档，已属实验性质）。
+</p>
+<p>
+<strong>差异：</strong>这一类基本是「<em>逐文件/逐目录喂给 LLM 写说明</em>」，产出按<strong>代码结构</strong>组织
+（这个文件做什么、这个目录做什么）。CodeAtlas 的产出按<strong>业务领域</strong>组织，
+并且坚持叙述挂证据摘要、证据变了自动失效。换句话说这一类回答「这段代码是什么」，
+CodeAtlas 试图回答「这个系统在做什么业务」——后者是老项目接手时真正卡住人的问题。
+另外这一类普遍不做中文业务术语表，而中文术语 ↔ 代码标识符的映射恰是国内老项目的核心缺口。
+</p>
+
+<h4>第二类：代码知识图谱 / 上下文引擎（面向 AI agent）</h4>
+<p>
+代表是 <a href="https://github.com/colbymchenry/codegraph">CodeGraph</a>
+（Rust 内核、20 种语言，预建符号/调用边/依赖图供 agent 一次查询命中，
+公布的数据是平均省 35% 成本、少 70% 工具调用）、
+<a href="https://github.com/potpie-ai/potpie">Potpie</a>
+（Apache 2.0，把代码库连同 PR/issue/Notion 等 SDLC 材料一起做成「上下文图」，
+配一组预置 agent）、以及研究向的
+<a href="https://github.com/wala/graph4code">GraphGen4Code</a>（基于 WALA 静态分析）。
+</p>
+<p>
+<strong>差异：</strong>这一类解决的是「<em>让 agent 少花 token 精确定位代码</em>」——
+优化的是检索效率，图里的节点是符号与调用关系，不含业务语义层。
+CodeAtlas 与它们<strong>不冲突而是互补</strong>：
+它们让 agent 快速找到代码，CodeAtlas 告诉 agent 这块代码属于哪个业务领域、有什么坑。
+事实上本项目所在的开发环境同时装了 CodeGraph，两者各管一段。
+</p>
+
+<h4>第三类：已成工具的学术项目</h4>
+<p>
+<a href="https://github.com/OpenBMB/RepoAgent">RepoAgent</a>(OpenBMB,约 1k star、239 commit)
+是这一类里唯一真正跨过「论文 → 可用工具」门槛的:<code>pip install repoagent</code> 可装,
+有 CLI、GitHub Actions 集成与 pre-commit 钩子,并列出 MiniCPM、ChatDev、XAgent 等采用方。
+它的做法是逐对象(类/函数)生成文档并靠 git 钩子在提交时增量更新,
+产出仍按代码结构组织,主要面向 Python。
+</p>
+
+<h4>第四类：论文与研究原型（还不是可依赖的工具）</h4>
+<div class="callout warn">
+  <p style="margin-top:0">
+    下面这些是<strong>论文</strong>,不是成熟开源项目——放在这里是因为<em>思路值得借鉴</em>,
+    而不是可以拿来用。引用它们公布的数据时要记住那是作者自评结果。
+  </p>
+  <ul style="margin-bottom:0">
+    <li>
+      <a href="https://arxiv.org/html/2604.26523v1">RepoDoc</a>(中山大学)——
+      <strong>路线与本项目最接近</strong>:先建仓库知识图谱当语义骨架,
+      再做上下文感知生成与精确增量更新,而且<strong>按功能内聚而非物理布局做模块聚类</strong>,
+      与本项目的领域划分思路一致。自评数据:相比 CodeWiki,API 覆盖率 +32.5%、
+      生成快 3 倍且省 85% token、增量更新省时 73%。
+      但<a href="https://github.com/SYSUSELab/RepoDoc">代码仓库</a>只有约 17 star、4 次提交、
+      README 只列了几条 CLI 命令——是<strong>研究原型</strong>,不具备生产可依赖性。
+      值得做的是读它的聚类与增量更新方法,而不是引入它。
+    </li>
+    <li>
+      <a href="https://arxiv.org/pdf/2603.27277">Codebase-Memory</a>——
+      tree-sitter 知识图谱 + MCP 暴露给 LLM,与第二类工具思路重合,论文形态。
+    </li>
+  </ul>
+</div>
+
+<h4>第五类：商业产品</h4>
+<p>
+<a href="https://kodesage.ai/blog/ai-documentation-tools-for-legacy-code">Kodesage</a>
+专打遗留代码,主打随代码演进的「活文档」、关系映射与可私有化/断网部署——
+<strong>定位与本项目几乎完全重合</strong>,但闭源、无法按内部技术栈定制。
+CodeScene 则是另一个路子:不做 LLM 解读,而是做行为分析,
+以「热点」图找出既复杂又频繁变更的代码——它的变更热点思路和本项目用 git churn 当领域信号是同源的。
+</p>
+
+<h3>那么为什么还要自研</h3>
+<div class="card">
+  <p style="margin-top:0">四条差异是当前开源项目都没同时覆盖的：</p>
+  <ul>
+    <li><strong>按业务领域而非文件结构组织</strong>，且领域是从包路径/表名/git 共变/调用四路信号投票算出来的，不靠人工划分；</li>
+    <li><strong>叙述强制挂 <code>source_digest</code></strong>，证据变了自动失效——多数 Wiki 生成器是「重跑一遍覆盖掉」，说不清哪条结论该作废；</li>
+    <li><strong>中文业务术语表</strong>（术语 ↔ 别名 ↔ 代码标识符 ↔ 枚举值），针对国内老项目「注释是中文、标识符是拼音或英文缩写」的现实；</li>
+    <li><strong>咬住特定老技术栈的脏细节</strong>：MyBatis <code>resultMap</code> 反推表结构（项目连 DDL 都没有）、
+      <code>ON DUPLICATE KEY UPDATE</code> 特判、Dubbo XML 入口、接口→实现的 override 边
+      （补上这条链路从 4 条变 455 条）。通用工具不会为一条内部技术栈做这些特判，而<strong>老项目的知识恰恰卡在这些细节上</strong>。</li>
+  </ul>
+  <p style="margin-bottom:0">
+    反过来说，<strong>不该自研的部分也很清楚</strong>：符号级检索与调用图定位，
+    CodeGraph 这类工具做得更好且支持 20 种语言，直接共用即可；
+    逐对象的 API 级文档生成，RepoAgent 已经做到可安装可集成。
+    这两块没必要在 CodeAtlas 里重做——它该守住的只有「业务领域划分 + 证据可追溯的中文业务叙述」这一段。
+  </p>
+</div>
+
+<div class="callout warn">
+  <p>
+    <strong>一个需要诚实承认的点：</strong>上述项目大多有社区、有多语言支持、有基准数据，
+    而 CodeAtlas 目前只在一个项目上验证过。它的价值在于<em>对特定老技术栈和中文语境的贴合度</em>，
+    以及<em>证据可追溯这一机制约束</em>——不在通用性。
+    如果目标项目换成技术栈现代、文档尚存的库，成熟开源方案大概率更划算。
+  </p>
+</div>
+
+<hr>
+
+<h3>一句话总结</h3>
+<div class="callout">
+  <p>
+    CodeAtlas 把老项目里<strong>确定能抽出来的事实</strong>（注释、表结构、git 历史）
+    先零成本地全量沉淀成结构化真相，再让大模型<strong>只在这些证据之上</strong>写业务叙述，
+    并给每条叙述挂上证据摘要——于是文档天生可追溯、可审计，
+    并且会随代码自动失效重算，而不是随时间腐烂。
+  </p>
+</div>
+
+<footer>
+  <p>
+    CodeAtlas（<code>catlas</code>）· 公司内部工具 ·
+    配套阅读：<a href="improvements.html">improvements.html</a>（对照同类项目得出的改进建议与落地顺序）·
+    <code>docs/design.md</code>（三层模型与设计决策）·
+    <code>docs/roadmap.md</code>（各阶段状态与限制）
+  </p>
+</footer>
+
+</div>
+</body>
+</html>
