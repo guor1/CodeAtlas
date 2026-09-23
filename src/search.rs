@@ -219,16 +219,17 @@ pub fn rebuild(store: &Store, project_id: i64) -> Result<usize> {
 
 /// Search the index, ranked by relevance, best match first.
 pub fn query(store: &Store, project_id: i64, text: &str, limit: usize) -> Result<Vec<Hit>> {
-    let q = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    anyhow::ensure!(!q.is_empty(), "查询词为空");
+    let terms = split_terms(text);
+    anyhow::ensure!(!terms.is_empty(), "查询词为空");
+
     // Trigram needs ≥3 contiguous characters to form a single token, so a one-
     // or two-character query would match nothing — an especially bad failure for
     // CJK, where two characters is a complete business term (特价). Those short
     // queries fall back to a substring scan over the same columns.
-    if q.chars().count() < 3 {
-        return like_query(store, project_id, &q, limit);
+    if terms.iter().all(|t| t.chars().count() < 3) {
+        return like_query(store, project_id, &terms.join(" "), limit);
     }
-    let fts = to_fts_query(&q);
+    let fts = to_fts_query(&terms);
     let mut stmt = store
         .conn
         .prepare(
@@ -248,6 +249,24 @@ pub fn query(store: &Store, project_id: i64, text: &str, limit: usize) -> Result
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
+/// Split a query into terms worth matching, one of which is enough to hit.
+///
+/// A whole natural-language question (`queryProductPrice 这个dubbo接口获取价格的流程是什么`)
+/// contains no trigram that appears verbatim in the index — the words around
+/// the identifier are the question, not the code — so quoting it as one phrase
+/// matches nothing. What a caller actually means is "find rows mentioning any
+/// of these": each whitespace-separated term becomes an OR'd FTS phrase.
+///
+/// Longer queries are also what an MCP client sends when a model doesn't know
+/// how much to strip; returning zero hits there reads to the model as "the
+/// knowledge base has nothing", which is worse than a broad answer.
+fn split_terms(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(str::to_string)
+        .filter(|t| !t.is_empty())
+        .collect()
 }
 
 /// Substring scan for queries too short for trigram (1–2 characters).
@@ -285,8 +304,12 @@ fn escape_like(s: &str) -> String {
 
 /// Wrap the query as an FTS5 phrase so none of its characters are parsed as
 /// match syntax. Inside a quoted phrase only `"` is special, doubled to escape.
-fn to_fts_query(text: &str) -> String {
-    format!("\"{}\"", text.replace('"', "\"\""))
+fn to_fts_query(terms: &[String]) -> String {
+    terms
+        .iter()
+        .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" OR ")
 }
 
 /// Human label for a hit, e.g. `符号·方法` or `入口·Dubbo`.
@@ -427,8 +450,16 @@ mod tests {
 
     #[test]
     fn fts_query_escapes_double_quotes() {
-        assert_eq!(to_fts_query("a\"b"), "\"a\"\"b\"");
-        assert_eq!(to_fts_query("特价"), "\"特价\"");
+        assert_eq!(to_fts_query(&["a\"b".into()]), "\"a\"\"b\"");
+        assert_eq!(to_fts_query(&["特价".into()]), "\"特价\"");
+    }
+
+    #[test]
+    fn fts_query_ors_multiple_terms() {
+        assert_eq!(
+            to_fts_query(&["queryProductPrice".into(), "价格".into()]),
+            "\"queryProductPrice\" OR \"价格\""
+        );
     }
 
     #[test]
@@ -437,6 +468,36 @@ mod tests {
         let store = Store::open(dir.path()).unwrap();
         let pid = store.ensure_project("p", dir.path()).unwrap();
         assert!(query(&store, pid, "   ", 10).is_err());
+    }
+
+    #[test]
+    fn a_natural_language_question_finds_the_identifier() {
+        let (_d, store, pid) = store_with_symbol();
+        rebuild(&store, pid).unwrap();
+        // One term from the question matches the indexed doc; quoting the whole
+        // sentence as a phrase would return nothing.
+        let hits = query(&store, pid, "特价活动 的 计算规则 是什么", 10).unwrap();
+        assert!(hits.iter().any(|h| h.title.contains("TEJIA")));
+    }
+
+    #[test]
+    fn mixed_length_terms_use_fts_not_the_short_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let pid = store.ensure_project("p", dir.path()).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO search_fts(title, body, kind, subject_kind, subject_id, project_id, file_path)
+                 VALUES ('queryProductPrice', 'dubbo 接口', 'entrypoint', 'dubbo', 1, ?1, NULL)",
+                params![pid],
+            )
+            .unwrap();
+        // "的" is 1 char (would need the LIKE fallback alone), but the whole
+        // query has ≥3-char terms, so it takes the FTS path — where 的 simply
+        // matches nothing — and still finds the row via the other term.
+        let hits = query(&store, pid, "queryProductPrice 这个 接口 的 流程", 10).unwrap();
+        assert!(hits.iter().any(|h| h.title == "queryProductPrice"));
     }
 
     #[test]
