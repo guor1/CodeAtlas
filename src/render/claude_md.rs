@@ -116,6 +116,26 @@ fn block(store: &Store, project_id: i64, root: &Path, out_dir: &Path) -> Result<
         s,
         "- **枚举和常量类里的中文注释是业务语义的权威出处**，比方法名可靠得多。"
     )?;
+    writeln!(s)?;
+
+    // The MCP tool description alone is too weak a signal: a session asked a
+    // question gets an answer and moves on, and the finding evaporates. The
+    // CLAUDE.md block is the only place we can tell every future session,
+    // up front, that writing conclusions down is part of the job.
+    writeln!(s, "### 得出结论后沉淀回来\n")?;
+    writeln!(
+        s,
+        "分析代码得出**已核实**的业务结论时，调 MCP 工具 `propose_insight` 沉淀为候选洞察，\
+         需附代码位置作证据。三种类型："
+    )?;
+    writeln!(s, "- `business_rule` 业务规则 —— 代码实际怎么运作（如：取消订单不释放优惠券）")?;
+    writeln!(s, "- `landmine` 坑 —— 容易踩的陷阱（如：核销入口不校验门店归属，漏传即跨门店核销）")?;
+    writeln!(s, "- `term` 术语 —— 中文黑话与代码的对应（如：特价活动 = `TEJIA` 枚举）")?;
+    writeln!(
+        s,
+        "确认这件事的依据在代码里、能给出 file/行号 的，才提交；推断、猜测、待办不要提交——\
+         这不是笔记工具。提交后成为候选，人工 `catlas review --accept` 确认才进入检索。"
+    )?;
     writeln!(s, "\n知识库过期时重新生成：`catlas build && catlas render --claude-md`")?;
     write!(s, "{END}")?;
     Ok(s)
@@ -163,5 +183,20 @@ mod tests {
         let existing = "重要内容\n<!-- catlas:end -->\n<!-- catlas:begin -->\n";
         let out = splice(existing, "<!-- catlas:begin -->\nX\n<!-- catlas:end -->");
         assert!(out.contains("重要内容"));
+    }
+
+    #[test]
+    fn block_directs_sessions_to_propose_insights() {
+        // A session gets the write-path guidance from the block itself — without
+        // this section, findings evaporate with the session.
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let pid = store.ensure_project("p", dir.path()).unwrap();
+        let out_dir = dir.path().join(".knowledge");
+        let b = block(&store, pid, dir.path(), &out_dir).unwrap();
+        assert!(b.contains("propose_insight"));
+        assert!(b.contains("business_rule"));
+        assert!(b.contains("landmine"));
+        assert!(b.contains("term"));
     }
 }
