@@ -92,6 +92,12 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// 以 MCP server 方式运行（stdio），暴露知识库给 Claude Code
+    Mcp {
+        /// 项目根目录，默认为当前目录
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -109,6 +115,7 @@ fn main() -> Result<()> {
         }
         Command::Domains { path, json } => cmd_domains(resolve(path)?, json),
         Command::Query { path, terms, limit, json } => cmd_query(resolve(path)?, terms, limit, json),
+        Command::Mcp { path } => codeatlas::mcp::run(&resolve(path)?),
     }
 }
 

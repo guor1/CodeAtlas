@@ -16,6 +16,7 @@
 pub mod build;
 pub mod extract;
 pub mod llm;
+pub mod mcp;
 pub mod render;
 pub mod search;
 pub mod store;

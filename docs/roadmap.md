@@ -34,7 +34,7 @@
 - [x] 领域档案/术语表按 digest 失效、`--only-stale` 跳过
 - [x] `catlas query`（FTS5 全文检索）—— trigram 分词、索引随 build/deepen 重建、`--json`
 - [x] `catlas sync`（增量）—— sha256 变更检测 + 解析缓存复用，见下方「sync 的变更检测为什么不看 git」
-- [ ] MCP server 暴露给 Claude Code —— 用 `catlas query --json` 先顶上，未做
+- [x] `catlas mcp`（MCP server）—— stdio JSON-RPC，暴露 search/domains/status 三个只读工具给 Claude Code
 
 ## sync 的变更检测为什么不看 git
 
@@ -64,6 +64,7 @@
 - `catlas query` 短查询回退新增 1 个单测（LIKE 通配符转义），共 114 个
 - `sync` git 缓存新增 2 个单测（`git::head` 正确/非 repo 为 None），共 116 个
 - `sync` git 增量摄取新增 4 个单测（`log_range` / `is_ancestor` / `apply_incremental` 折叠 / 截断），共 120 个；端到端实测增量结果与全量 walk 逐字节一致
+- `mcp` 新增 7 个单测（initialize/tools_list/notification/三工具调用/未知工具/未知方法），共 127 个；管道喂 JSON-RPC 端到端验证三工具均返回合法结果
 - `yaoex-promotion` 全量构建实测：20 秒，模块12/文件1714/符号22394/调用边47807/表140/字段1434/入口506/领域43/链路455
 - `deepen --domain defective` 实测：产出领域解读 + 术语表，质量抽查通过（准确扒出「捡漏专区」别名、时间交叉互斥规则、`batchUpdateSortNum` 注释自曝无用等）
 - `deepen --capability` 实测：单入口能力叙述端到端跑通（demo 项目 `GET /coupon/list` 产出摘要/入参/执行过程/副作用/约束/易踩坑，二次运行按 digest 正确跳过）
@@ -71,5 +72,5 @@
 
 ## 待办（下次会话优先）
 
-1. MCP server 暴露给 Claude Code —— 用 `catlas query --json` 先顶上，未做
+无 —— 阶段 A/B/C/D 的功能项已全部实现。可选增强：`capability` 接入 MCP 工具、`sync` 的增量摄取扩展到 XML、跨项目知识融合（`project_id` 已预埋）。
 

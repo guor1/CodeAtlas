@@ -31,6 +31,15 @@ catlas deepen --capability --kind dubbo      # 只做 Dubbo 接口；--kind http
 
 其它命令：`catlas build`（全量重建）、`catlas sync`（增量，复用未变文件的解析缓存）、`catlas query "关键词" [--json]`（全文检索）、`catlas status`（各层统计）、`catlas domains [--json]`。
 
+## 接入 Claude Code
+
+```bash
+# 注册为 MCP server，让 Claude Code 直接查询知识库（只读工具）
+claude mcp add catlas -- catlas mcp --path /path/to/legacy-project
+```
+
+暴露三个只读工具：`search`（全文检索）、`domains`（领域清单）、`status`（各层统计）。
+
 ## 产物结构
 
 ```
