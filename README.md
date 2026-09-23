@@ -79,7 +79,19 @@ cargo build --release   # 需要 rustc/cargo，依赖 tree-sitter-java + rusqlit
 cargo test              # 单测（含 fixtures）
 ```
 
-LLM 调用复用 `$ANTHROPIC_BASE_URL` / `$ANTHROPIC_AUTH_TOKEN`（与 Claude Code 相同的环境变量）。
+## LLM 配置
+
+`catlas deepen` 按 Claude Code 的方式解析配置，**环境变量优先，其次读 `~/.claude/settings.json` 的 `env` 块**
+（`$CLAUDE_CONFIG_DIR` 会被尊重）。所以只要 Claude Code 能用，catlas 在普通 shell 里也能用，不必重复导出：
+
+| 键 | 用途 | 缺省 |
+|---|---|---|
+| `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` | 凭证（必需） | 无，缺失即报错 |
+| `ANTHROPIC_BASE_URL` | 网关地址 | `https://api.anthropic.com` |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | 模型，也可用 `--model` 覆盖 | `claude-sonnet-5` |
+| `API_TIMEOUT_MS` | 单请求超时 | 300s |
+
+空字符串的环境变量视为未设置，会继续回退到文件。
 
 ## 许可 / 归属
 

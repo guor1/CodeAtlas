@@ -9,6 +9,8 @@ use crate::util;
 use anyhow::{Context, Result};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone)]
@@ -24,18 +26,34 @@ pub struct Config {
 }
 
 impl Config {
-    /// Read configuration from the environment, matching what Claude Code uses.
+    /// Read configuration the way Claude Code resolves it: the process
+    /// environment first, then the `env` block of `~/.claude/settings.json`.
+    ///
+    /// The file fallback is what makes `catlas deepen` work from a plain shell.
+    /// Behind a company gateway the credential and base URL typically live only
+    /// in that file — Claude Code injects them into the processes it spawns, so
+    /// without this a command that succeeded inside Claude Code would fail when
+    /// run by hand, for no visible reason.
     pub fn from_env(model: Option<&str>) -> Result<Self> {
-        let base_url = std::env::var("ANTHROPIC_BASE_URL")
-            .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
-        let api_key = std::env::var("ANTHROPIC_AUTH_TOKEN")
-            .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-            .context(
-                "未找到 API 凭证：请设置 ANTHROPIC_AUTH_TOKEN 或 ANTHROPIC_API_KEY",
-            )?;
+        let settings = settings_env();
+        let var = |key: &str| pick(key, &settings);
+
+        let base_url = var("ANTHROPIC_BASE_URL")
+            .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+        let api_key = var("ANTHROPIC_AUTH_TOKEN")
+            .or_else(|| var("ANTHROPIC_API_KEY"))
+            .with_context(|| {
+                format!(
+                    "未找到 API 凭证：请设置环境变量 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY，\
+                     或在 {} 的 env 块中配置",
+                    settings_path()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "~/.claude/settings.json".into())
+                )
+            })?;
         let model = model
             .map(str::to_string)
-            .or_else(|| std::env::var("ANTHROPIC_DEFAULT_SONNET_MODEL").ok())
+            .or_else(|| var("ANTHROPIC_DEFAULT_SONNET_MODEL"))
             .unwrap_or_else(|| "claude-sonnet-5".to_string());
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -45,10 +63,60 @@ impl Config {
             // and a truncated response is unparseable rather than merely short.
             max_tokens: 16384,
             model,
-            timeout_secs: 300,
+            timeout_secs: var("API_TIMEOUT_MS")
+                .and_then(|ms| ms.parse::<u64>().ok())
+                .map(|ms| (ms / 1000).max(1))
+                .unwrap_or(300),
             budget_tokens: 0,
         })
     }
+}
+
+/// One setting, process environment winning over the settings file.
+///
+/// An empty environment variable counts as unset: exporting `FOO=` to clear a
+/// value should fall through to the file, not select the empty string.
+fn pick(key: &str, settings: &BTreeMap<String, String>) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| settings.get(key).cloned())
+}
+
+/// `~/.claude/settings.json`, honouring `CLAUDE_CONFIG_DIR` as Claude Code does.
+fn settings_path() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+        return Some(PathBuf::from(dir).join("settings.json"));
+    }
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(PathBuf::from(home).join(".claude").join("settings.json"))
+}
+
+/// The `env` block of the settings file, empty when it cannot be used.
+///
+/// Best-effort by design: a missing, unreadable or malformed file means "no
+/// fallback available", never a hard error — the process environment may well
+/// carry everything needed, and failing the run over an unrelated syntax error
+/// in someone's editor config would be gratuitous.
+fn settings_env() -> BTreeMap<String, String> {
+    let Some(path) = settings_path() else { return BTreeMap::new() };
+    let Ok(text) = std::fs::read_to_string(&path) else { return BTreeMap::new() };
+    env_block(&text)
+}
+
+/// Parse the `env` object out of settings JSON, keeping only string values.
+fn env_block(text: &str) -> BTreeMap<String, String> {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
+        return BTreeMap::new();
+    };
+    json.get("env")
+        .and_then(serde_json::Value::as_object)
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Serialize)]
@@ -354,4 +422,70 @@ fn restrict_permissions(path: &std::path::Path) -> Result<()> {
 #[cfg(not(unix))]
 fn restrict_permissions(_path: &std::path::Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_block_reads_string_values_only() {
+        let text = r#"{
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://gateway.example.com",
+                "CLAUDE_CODE_USE_BEDROCK": "0",
+                "nested": { "ignored": true },
+                "numeric": 42
+            },
+            "theme": "dark"
+        }"#;
+        let env = env_block(text);
+        assert_eq!(env.get("ANTHROPIC_BASE_URL").unwrap(), "https://gateway.example.com");
+        assert_eq!(env.get("CLAUDE_CODE_USE_BEDROCK").unwrap(), "0");
+        assert!(!env.contains_key("nested"));
+        assert!(!env.contains_key("numeric"));
+    }
+
+    #[test]
+    fn env_block_tolerates_junk_and_absence() {
+        assert!(env_block("not json at all").is_empty());
+        assert!(env_block("{}").is_empty());
+        assert!(env_block(r#"{"env": "not an object"}"#).is_empty());
+    }
+
+    #[test]
+    fn settings_fill_in_what_the_environment_lacks() {
+        let settings: BTreeMap<String, String> =
+            [("CATLAS_TEST_ONLY_IN_FILE".to_string(), "from-file".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(pick("CATLAS_TEST_ONLY_IN_FILE", &settings).unwrap(), "from-file");
+        assert!(pick("CATLAS_TEST_NOWHERE", &settings).is_none());
+    }
+
+    #[test]
+    fn the_environment_wins_over_the_file() {
+        // A unique key keeps this from colliding with other tests in the
+        // process; `set_var` is unsafe in edition 2024 because it races with
+        // concurrent readers of the environment.
+        let key = "CATLAS_TEST_PRECEDENCE";
+        let settings: BTreeMap<String, String> =
+            [(key.to_string(), "from-file".to_string())].into_iter().collect();
+        unsafe { std::env::set_var(key, "from-env") };
+        assert_eq!(pick(key, &settings).unwrap(), "from-env");
+
+        // An empty variable means "unset", so the file still applies.
+        unsafe { std::env::set_var(key, "") };
+        assert_eq!(pick(key, &settings).unwrap(), "from-file");
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn settings_path_follows_claude_config_dir() {
+        // Same caveat as above: this mutates process-wide state.
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", dir.path()) };
+        assert_eq!(settings_path().unwrap(), dir.path().join("settings.json"));
+        unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") };
+    }
 }
