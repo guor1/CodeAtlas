@@ -34,15 +34,32 @@ impl Store {
         Ok(store)
     }
 
+    /// Find the project root owning a knowledge base, starting at `start` and
+    /// walking up through its ancestors.
+    ///
+    /// Works the way `git` finds `.git/`, and for the same reason: a command is
+    /// often run from a subdirectory. It matters most for `catlas mcp`, whose
+    /// working directory is chosen by the MCP client (Claude Code inherits the
+    /// directory it was launched from, not necessarily the project root), which
+    /// is why the server can be registered without an explicit `--path`.
+    pub fn find_root(start: &Path) -> Result<PathBuf> {
+        for dir in start.ancestors() {
+            if dir.join(CODEATLAS_DIR).join(DB_FILE).exists() {
+                return Ok(dir.to_path_buf());
+            }
+        }
+        anyhow::bail!(
+            "在 {} 及其上级目录中找不到 {CODEATLAS_DIR}/{DB_FILE} — 先运行 `catlas init`",
+            start.display()
+        )
+    }
+
     /// Open an existing database, failing if it has not been initialized.
+    ///
+    /// `root` may be any directory inside the project; the store's own `root`
+    /// is the ancestor that actually holds `.codeatlas/`.
     pub fn open_existing(root: &Path) -> Result<Self> {
-        let db_path = root.join(CODEATLAS_DIR).join(DB_FILE);
-        anyhow::ensure!(
-            db_path.exists(),
-            "no knowledge base at {} — run `catlas init` first",
-            db_path.display()
-        );
-        Self::open(root)
+        Self::open(&Self::find_root(root)?)
     }
 
     fn migrate(&self) -> Result<()> {
@@ -319,4 +336,40 @@ fn owning_module(rel: &str, modules: &std::collections::BTreeMap<String, i64>) -
         }
     }
     best.map(|(_, id)| id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_root_walks_up_to_the_knowledge_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        Store::open(root).unwrap();
+        let deep = root.join("svc/order/src/main/java");
+        std::fs::create_dir_all(&deep).unwrap();
+
+        assert_eq!(Store::find_root(&deep).unwrap(), root);
+        assert_eq!(Store::find_root(root).unwrap(), root);
+    }
+
+    #[test]
+    fn find_root_reports_the_directory_it_started_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = Store::find_root(dir.path()).unwrap_err().to_string();
+        assert!(err.contains(&dir.path().display().to_string()), "{err}");
+        assert!(err.contains("catlas init"), "{err}");
+    }
+
+    #[test]
+    fn open_existing_from_a_subdirectory_keeps_the_project_root() {
+        let dir = tempfile::tempdir().unwrap();
+        Store::open(dir.path()).unwrap();
+        let sub = dir.path().join("module-a");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let store = Store::open_existing(&sub).unwrap();
+        assert_eq!(store.root, dir.path());
+    }
 }

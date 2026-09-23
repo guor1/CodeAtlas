@@ -82,7 +82,7 @@ enum Command {
     Query {
         /// 检索关键词
         terms: Vec<String>,
-        /// 项目根目录，默认为当前目录
+        /// 项目根目录，默认为当前目录（会向上查找 .codeatlas/）
         #[arg(long)]
         path: Option<PathBuf>,
         /// 最多返回条数
@@ -94,7 +94,7 @@ enum Command {
     },
     /// 以 MCP server 方式运行（stdio），暴露知识库给 Claude Code
     Mcp {
-        /// 项目根目录，默认为当前目录
+        /// 项目根目录，默认为当前目录（会向上查找 .codeatlas/）
         #[arg(long)]
         path: Option<PathBuf>,
     },
@@ -104,18 +104,20 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Init { path } => init(resolve(path)?),
-        Command::Build { path } => cmd_build(resolve(path)?),
-        Command::Sync { path } => cmd_sync(resolve(path)?),
-        Command::Status { path } => status(resolve(path)?),
+        Command::Build { path } => cmd_build(existing(path)?),
+        Command::Sync { path } => cmd_sync(existing(path)?),
+        Command::Status { path } => status(existing(path)?),
         Command::Render { path, out, claude_md } => {
-            cmd_render(resolve(path)?, out.as_deref(), claude_md)
+            cmd_render(existing(path)?, out.as_deref(), claude_md)
         }
         Command::Deepen { path, domains, capability, kind, dry_run, limit, model, force } => {
-            cmd_deepen(resolve(path)?, domains, capability, kind, dry_run, limit, model.as_deref(), force)
+            cmd_deepen(existing(path)?, domains, capability, kind, dry_run, limit, model.as_deref(), force)
         }
-        Command::Domains { path, json } => cmd_domains(resolve(path)?, json),
-        Command::Query { path, terms, limit, json } => cmd_query(resolve(path)?, terms, limit, json),
-        Command::Mcp { path } => codeatlas::mcp::run(&resolve(path)?),
+        Command::Domains { path, json } => cmd_domains(existing(path)?, json),
+        Command::Query { path, terms, limit, json } => {
+            cmd_query(existing(path)?, terms, limit, json)
+        }
+        Command::Mcp { path } => codeatlas::mcp::run(&existing(path)?),
     }
 }
 
@@ -127,6 +129,15 @@ fn resolve(path: Option<PathBuf>) -> Result<PathBuf> {
         .with_context(|| format!("解析路径 {} 失败", p.display()))?;
     anyhow::ensure!(p.is_dir(), "{} 不是目录", p.display());
     Ok(p)
+}
+
+/// Resolve the root for a command that needs a knowledge base already built.
+///
+/// Unlike `resolve`, this walks up to the directory that owns `.codeatlas/`, so
+/// every command works from a subdirectory — and so the root used for scanning,
+/// rendering and printing is the same one the store opened.
+fn existing(path: Option<PathBuf>) -> Result<PathBuf> {
+    Store::find_root(&resolve(path)?)
 }
 
 fn project_name(root: &Path) -> String {

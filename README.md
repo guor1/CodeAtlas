@@ -33,10 +33,20 @@ catlas deepen --capability --kind dubbo      # 只做 Dubbo 接口；--kind http
 
 ## 接入 Claude Code
 
+前提：目标项目已经 `catlas init` 过（MCP server 只读已有知识库，不会自己构建）。
+
 ```bash
-# 注册为 MCP server，让 Claude Code 直接查询知识库（只读工具）
-claude mcp add catlas -- catlas mcp --path /path/to/legacy-project
+# 一次性安装二进制
+cargo install --path /path/to/CodeAtlas      # → ~/.cargo/bin/catlas
+
+# 在目标项目根目录注册为 MCP server（只读工具）
+cd /path/to/legacy-project
+claude mcp add catlas -s project -- catlas mcp
 ```
+
+`--path` 可省：所有命令都像 `git` 找 `.git/` 那样，从当前目录向上查找最近的 `.codeatlas/`，
+因此在子目录里跑也没问题。省掉它写出来的 `.mcp.json` 不含机器相关的绝对路径，可以提交给团队共用。
+需要固定指向某个项目（例如从别处启动会话）时再显式给 `--path /path/to/legacy-project`。
 
 暴露三个只读工具：`search`（全文检索）、`domains`（领域清单）、`status`（各层统计）。
 
