@@ -3,4 +3,5 @@
 pub mod client;
 pub mod deepen;
 pub mod pack;
+pub mod progress;
 pub mod prompt;

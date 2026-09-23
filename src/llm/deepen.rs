@@ -1,7 +1,7 @@
 //! The `deepen` pipeline: turn evidence packs into stored notes and glossary
 //! entries, each carrying the digest of the evidence it was derived from.
 
-use super::{client, pack, prompt};
+use super::{client, pack, progress, prompt};
 use crate::search;
 use crate::store::Store;
 use crate::util;
@@ -111,8 +111,14 @@ pub fn run(
         todo.truncate(n);
     }
 
-    for c in todo {
+    let total = todo.len();
+    if !opts.dry_run {
+        eprintln!("准备处理 {total} 个领域，模型 {}", cfg.model);
+    }
+
+    for (i, c) in todo.into_iter().enumerate() {
         if opts.only_stale && !opts.dry_run && is_fresh(store, project_id, c.id)? {
+            eprintln!("[{}/{total}] {} — 跳过（结果仍新鲜）", i + 1, c.key);
             stats.domains_skipped += 1;
             continue;
         }
@@ -125,17 +131,53 @@ pub fn run(
             continue;
         }
 
+        eprintln!(
+            "[{}/{total}] {} — 证据 {} 文件 / ~{} token，请求中…",
+            i + 1,
+            c.key,
+            c.files,
+            progress::tokens(pack.estimated_tokens)
+        );
+        let before = (stats.input_tokens, stats.output_tokens, stats.cache_hits);
+        let started = std::time::Instant::now();
+
         // A failure on one domain must not abandon the rest of the run: these
         // are expensive, independent units of work.
         match process(store, cfg, project_id, &c, &pack, &mut stats) {
-            Ok(()) => stats.domains_processed += 1,
-            Err(e) => stats.failures.push((c.key.clone(), format!("{e:#}"))),
+            Ok(()) => {
+                stats.domains_processed += 1;
+                report_unit(&c.key, before, &stats, started.elapsed().as_secs_f64());
+            }
+            Err(e) => {
+                eprintln!("        ✗ {}: {e:#}", c.key);
+                stats.failures.push((c.key.clone(), format!("{e:#}")));
+            }
         }
     }
     // The search index is a derived view; refresh it so new notes and glossary
     // entries are findable without a rebuild.
+    if !opts.dry_run {
+        eprintln!("重建检索索引…");
+    }
     search::rebuild(store, project_id)?;
     Ok(stats)
+}
+
+/// One line per finished unit, reporting what that unit alone cost.
+///
+/// `stats` accumulates across the run, so the per-unit figure is the delta
+/// against the snapshot taken before the call.
+fn report_unit(key: &str, before: (usize, usize, usize), stats: &DeepenStats, secs: f64) {
+    let (in_before, out_before, hits_before) = before;
+    if stats.cache_hits > hits_before {
+        eprintln!("        ✓ {key} — 命中缓存，未计费（{secs:.0}s）");
+    } else {
+        eprintln!(
+            "        ✓ {key} — token 输入 {} / 输出 {}（{secs:.0}s）",
+            progress::tokens(stats.input_tokens - in_before),
+            progress::tokens(stats.output_tokens - out_before)
+        );
+    }
 }
 
 /// An entrypoint worth writing a capability narrative for.
@@ -243,7 +285,12 @@ pub fn run_capabilities(
         todo.truncate(n);
     }
 
-    for c in todo {
+    let total = todo.len();
+    if !opts.dry_run {
+        eprintln!("准备处理 {total} 个入口，模型 {}", cfg.model);
+    }
+
+    for (i, c) in todo.into_iter().enumerate() {
         let pack = pack::build_capability(store, project_id, c.id)
             .with_context(|| format!("为入口 `{}` 组装证据失败", c.subject_key))?;
 
@@ -252,13 +299,33 @@ pub fn run_capabilities(
             continue;
         }
         if opts.only_stale && is_capability_fresh(store, project_id, &c.subject_key, &pack.source_digest)? {
+            eprintln!("[{}/{total}] {} — 跳过（结果仍新鲜）", i + 1, c.subject_key);
             stats.domains_skipped += 1;
             continue;
         }
+
+        eprintln!(
+            "[{}/{total}] {} — 证据 ~{} token，请求中…",
+            i + 1,
+            c.subject_key,
+            progress::tokens(pack.estimated_tokens)
+        );
+        let before = (stats.input_tokens, stats.output_tokens, stats.cache_hits);
+        let started = std::time::Instant::now();
+
         match process_capability(store, cfg, project_id, &c, &pack, &mut stats) {
-            Ok(()) => stats.domains_processed += 1,
-            Err(e) => stats.failures.push((c.subject_key.clone(), format!("{e:#}"))),
+            Ok(()) => {
+                stats.domains_processed += 1;
+                report_unit(&c.subject_key, before, &stats, started.elapsed().as_secs_f64());
+            }
+            Err(e) => {
+                eprintln!("        ✗ {}: {e:#}", c.subject_key);
+                stats.failures.push((c.subject_key.clone(), format!("{e:#}")));
+            }
         }
+    }
+    if !opts.dry_run {
+        eprintln!("重建检索索引…");
     }
     search::rebuild(store, project_id)?;
     Ok(stats)
@@ -519,11 +586,16 @@ fn complete_parsed<T: for<'de> serde::Deserialize<'de>>(
         let effective_system = if attempt == 0 {
             system.to_string()
         } else {
+            eprintln!("        响应不是合法 JSON，重试一次…");
             format!("{system}\n\n重要：上一次响应不是合法 JSON。只输出 JSON 对象本身，不要有任何其它内容。")
         };
         // Always cache under the original prompt, so a retry's good response is
         // reused by later runs instead of being filed under a key nobody asks for.
-        let done = client::complete_keyed(store, cfg, &effective_system, user, system)?;
+        // The heartbeat covers exactly this call, the only slow step in the loop.
+        let done = {
+            let _hb = progress::Heartbeat::start();
+            client::complete_keyed(store, cfg, &effective_system, user, system)?
+        };
         // Cached responses cost nothing; counting them as spend would misreport
         // the one number an operator uses to decide whether to keep going.
         if done.cached {
